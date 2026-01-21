@@ -200,7 +200,7 @@
                             {% endif %}
                             {% if client_data.last_updated %}
                             <div class="col-md-6">
-                                <strong>Last Updated in DNAC:</strong>
+                                <strong>Last Updated in Catalyst Center:</strong>
                                 <div class="mt-1 text-muted">{{ client_data.last_updated }}</div>
                             </div>
                             {% endif %}
@@ -208,6 +208,110 @@
                     </div>
                 </div>
             </div>
+        </div>
+        {% endif %}
+
+        <!-- Compliance & Security Row -->
+        {% if client_data.compliance or client_data.advisories %}
+        <div class="row">
+            <!-- Compliance Status Card -->
+            {% if client_data.compliance %}
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-clipboard-check"></i> Compliance Status
+                            {% if client_data.compliance.overall_status == "NON_COMPLIANT" %}
+                            <span class="badge bg-danger ms-2">Non-Compliant</span>
+                            {% else %}
+                            <span class="badge bg-success ms-2">Compliant</span>
+                            {% endif %}
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for record in client_data.compliance.compliance_records %}
+                                <tr>
+                                    <td>{{ record.type }}</td>
+                                    <td>
+                                        {% if record.status == "COMPLIANT" %}
+                                        <span class="badge bg-success">Compliant</span>
+                                        {% elif record.status == "NON_COMPLIANT" %}
+                                        <span class="badge bg-danger">Non-Compliant</span>
+                                        {% elif record.status == "NOT_APPLICABLE" %}
+                                        <span class="badge bg-secondary">N/A</span>
+                                        {% elif record.status == "IN_PROGRESS" %}
+                                        <span class="badge bg-warning text-dark">In Progress</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">{{ record.status }}</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="2" class="text-muted">No compliance data available</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Security Advisories Card -->
+            {% if client_data.advisories %}
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-shield-alert"></i> Security Advisories (PSIRT)
+                            {% if client_data.advisories.advisory_count > 0 %}
+                            <span class="badge bg-warning text-dark ms-2">{{ client_data.advisories.advisory_count }} Advisory{{ client_data.advisories.advisory_count|pluralize:",ies" }}</span>
+                            {% else %}
+                            <span class="badge bg-success ms-2">No Advisories</span>
+                            {% endif %}
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if client_data.advisories.advisory_count > 0 %}
+                        <div class="mb-2">
+                            <small class="text-muted">
+                                Scan Status: <span class="badge bg-info text-dark">{{ client_data.advisories.scan_status }}</span>
+                            </small>
+                        </div>
+                        <div style="max-height: 200px; overflow-y: auto;">
+                            <ul class="list-unstyled mb-0">
+                                {% for advisory_id in client_data.advisories.advisory_ids %}
+                                <li class="mb-1">
+                                    <a href="https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/{{ advisory_id }}" target="_blank" class="text-decoration-none">
+                                        <i class="mdi mdi-open-in-new"></i> {{ advisory_id }}
+                                    </a>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% if client_data.advisories.hidden_count > 0 %}
+                        <div class="mt-2 text-muted small">
+                            <i class="mdi mdi-eye-off"></i> {{ client_data.advisories.hidden_count }} hidden advisory{{ client_data.advisories.hidden_count|pluralize:",ies" }}
+                        </div>
+                        {% endif %}
+                        {% else %}
+                        <div class="text-success">
+                            <i class="mdi mdi-check-circle"></i> No security advisories affect this device
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
 
@@ -220,17 +324,130 @@
 
         {% else %}
         <div class="alert alert-info">
-            <i class="mdi mdi-information"></i> No device data available from Catalyst Center. The device may not be in the DNAC inventory.
+            <i class="mdi mdi-information"></i> No device data available from Catalyst Center. The device may not be in the inventory.
+        </div>
+        {% endif %}
+
+        <!-- Sync from DNAC Section -->
+        {% if client_data %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-sync"></i> Sync from Catalyst Center
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-2">Select fields to sync from Catalyst Center to NetBox:</p>
+                <div class="row">
+                    <div class="col-md-6">
+                        {% if client_data.management_ip %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="sync-ip" checked>
+                            <label class="form-check-label" for="sync-ip">
+                                <strong>Primary IP</strong>
+                                <br><small class="text-muted">{{ client_data.management_ip }}</small>
+                            </label>
+                        </div>
+                        {% endif %}
+                        {% if client_data.serial_number %}
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="sync-serial" checked>
+                            <label class="form-check-label" for="sync-serial">
+                                <strong>Serial Number</strong>
+                                <br><small class="text-muted">{{ client_data.serial_number }}</small>
+                            </label>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6">
+                        {% if client_data.snmp_location %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="sync-location">
+                            <label class="form-check-label" for="sync-location">
+                                <strong>SNMP Location</strong> <span class="badge bg-info text-dark">to comments</span>
+                                <br><small class="text-muted">{{ client_data.snmp_location|truncatechars:50 }}</small>
+                            </label>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="button" class="btn btn-success btn-sm" id="sync-from-dnac-btn">
+                        <i class="mdi mdi-sync"></i> Sync Selected
+                    </button>
+                    <span id="sync-result" class="ms-2"></span>
+                </div>
+            </div>
         </div>
         {% endif %}
 
         <!-- External link to Catalyst Center -->
         {% if catalyst_url %}
         <div class="mt-3">
+            {% if client_data.device_id %}
+            <a href="{{ catalyst_url }}/dna/provision/devices/inventory/device-details?deviceId={{ client_data.device_id }}" target="_blank" class="btn btn-primary btn-sm">
+                <i class="mdi mdi-open-in-new"></i> View in Catalyst Center
+            </a>
+            {% else %}
             <a href="{{ catalyst_url }}" target="_blank" class="btn btn-outline-primary btn-sm">
                 <i class="mdi mdi-open-in-new"></i> Open Catalyst Center
             </a>
+            {% endif %}
         </div>
+        {% endif %}
+
+        {% if client_data %}
+        <script>
+        document.getElementById('sync-from-dnac-btn').addEventListener('click', function() {
+            var btn = this;
+            var resultSpan = document.getElementById('sync-result');
+
+            // Gather selected sync options
+            var syncOptions = {
+                sync_ip: document.getElementById('sync-ip') ? document.getElementById('sync-ip').checked : false,
+                sync_serial: document.getElementById('sync-serial') ? document.getElementById('sync-serial').checked : false,
+                sync_location: document.getElementById('sync-location') ? document.getElementById('sync-location').checked : false
+            };
+
+            // Check if at least one option is selected
+            if (!syncOptions.sync_ip && !syncOptions.sync_serial && !syncOptions.sync_location) {
+                resultSpan.innerHTML = '<span class="text-warning"><i class="mdi mdi-alert"></i> Please select at least one field to sync</span>';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Syncing...';
+            resultSpan.innerHTML = '';
+
+            fetch('{% url "plugins:netbox_catalyst_center:sync_device" object.pk %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(syncOptions)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    resultSpan.innerHTML = '<span class="text-success"><i class="mdi mdi-check-circle"></i> ' + data.message + '</span>';
+                    // Reload page after short delay to show updated data
+                    setTimeout(function() {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</span>';
+                }
+            })
+            .catch(error => {
+                resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> Request failed: ' + error + '</span>';
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="mdi mdi-sync"></i> Sync Selected';
+            });
+        });
+        </script>
         {% endif %}
     </div>
 </div>

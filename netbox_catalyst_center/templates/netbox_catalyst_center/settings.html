@@ -87,12 +87,12 @@
                             <td><code>{{ mapping.manufacturer|default:"*" }}</code></td>
                             <td><code>{{ mapping.device_type|default:"*" }}</code></td>
                             <td>
-                                {% if mapping.lookup == "mac" %}
-                                <span class="badge bg-info text-dark">MAC Address</span>
-                                <small class="text-muted">(Wireless Client API)</small>
+                                {% if mapping.lookup == "client" or mapping.lookup == "mac" %}
+                                <span class="badge bg-info text-dark">Client</span>
+                                <small class="text-muted">(MAC lookup via Client API)</small>
                                 {% else %}
-                                <span class="badge bg-primary">Hostname</span>
-                                <small class="text-muted">(Network Device API)</small>
+                                <span class="badge bg-primary">Network Device</span>
+                                <small class="text-muted">(IP &rarr; Hostname &rarr; All devices)</small>
                                 {% endif %}
                             </td>
                         </tr>
@@ -136,10 +136,12 @@ PLUGINS_CONFIG = {
         'verify_ssl': False,
         # Device mappings control which devices show the tab
         # manufacturer/device_type are regex patterns
-        # lookup: "hostname" = Network Device API, "mac" = Client API
+        # lookup types:
+        #   "network_device" - IP > hostname > fetch all (for Cisco infra)
+        #   "client" - MAC address only (for wireless clients)
         'device_mappings': [
-            {'manufacturer': 'cisco', 'lookup': 'hostname'},
-            {'manufacturer': 'vocera', 'lookup': 'mac'},
+            {'manufacturer': 'cisco', 'lookup': 'network_device'},
+            {'manufacturer': 'vocera', 'lookup': 'client'},
         ],
     }
 }</code></pre>

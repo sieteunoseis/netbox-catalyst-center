@@ -198,15 +198,16 @@ class CatalystCenterClient:
 
         return client_info
 
-    def get_network_device(self, hostname):
+    def get_network_device(self, hostname, management_ip=None):
         """
-        Get network device details by hostname.
+        Get network device details by management IP or hostname.
 
         For Cisco infrastructure devices (voice gateways, APs, switches, etc.)
         that are in DNAC inventory.
 
         Args:
             hostname: Device hostname (with or without domain)
+            management_ip: Optional management IP address (preferred lookup method)
 
         Returns:
             dict with device details or error
@@ -221,24 +222,51 @@ class CatalystCenterClient:
             cached["cached"] = True
             return cached
 
-        # Extract base hostname without domain
-        base_hostname = hostname.lower().replace(".ohsu.edu", "")
         endpoint = "/dna/intent/api/v1/network-device"
+        result = None
 
-        # DNAC API is case-sensitive but supports regex character classes
-        # Build pattern like [Aa][Mm][Aa]agw01.* for case-insensitive matching
-        case_insensitive_pattern = "".join(
-            f"[{c.upper()}{c.lower()}]" if c.isalpha() else c
-            for c in base_hostname
-        )
-        wildcard_pattern = f"{case_insensitive_pattern}.*"
-        params = {"hostname": wildcard_pattern}
-        result = self._make_request(endpoint, params)
+        # Strategy 1: Try management IP lookup first (most reliable)
+        if management_ip:
+            params = {"managementIpAddress": management_ip}
+            result = self._make_request(endpoint, params)
+            if "error" not in result and result.get("response"):
+                logger.debug(f"Found device by management IP: {management_ip}")
+            else:
+                result = None  # Fall through to hostname lookup
 
-        if "error" in result:
-            return result
+        # Strategy 2: Fetch all devices and filter locally (case-insensitive)
+        # This is the most reliable method since DNAC regex is case-sensitive
+        if not result or not result.get("response"):
+            base_hostname = hostname.lower().replace(".ohsu.edu", "")
+
+            # Check if we have a cached device list
+            all_devices_cache_key = "catalyst_all_devices"
+            all_devices = cache.get(all_devices_cache_key)
+
+            if not all_devices:
+                # Fetch all devices from DNAC (no filter)
+                logger.debug("Fetching all devices from DNAC for local filtering")
+                result = self._make_request(endpoint)
+                if "error" not in result:
+                    all_devices = result.get("response", [])
+                    # Cache for 5 minutes to avoid repeated full fetches
+                    cache.set(all_devices_cache_key, all_devices, 300)
+
+            if all_devices:
+                # Filter locally with case-insensitive matching
+                for device in all_devices:
+                    dnac_hostname = device.get("hostname", "").lower()
+                    dnac_base = dnac_hostname.replace(".ohsu.edu", "")
+                    if dnac_base == base_hostname or base_hostname in dnac_base:
+                        result = {"response": [device]}
+                        logger.debug(f"Found device by local filter: {device.get('hostname')}")
+                        break
+
+        if not result or "error" in result:
+            return result if result else {"error": "No result from DNAC API"}
 
         response = result.get("response", [])
+        base_hostname = hostname.lower().replace(".ohsu.edu", "")
 
         # Find matching device (case-insensitive comparison on our side)
         device_data = None
@@ -259,7 +287,7 @@ class CatalystCenterClient:
                         device_data = device
                         break
 
-            # Last resort - first result
+            # Last resort - first result (for IP lookups)
             if not device_data and response:
                 device_data = response[0]
 
@@ -303,6 +331,126 @@ class CatalystCenterClient:
         cache.set(cache_key, device_info, cache_timeout)
 
         return device_info
+
+    def get_device_compliance(self, device_id):
+        """
+        Get compliance status for a device.
+
+        Args:
+            device_id: The Catalyst Center device UUID
+
+        Returns:
+            dict with compliance details
+        """
+        if not device_id:
+            return {"error": "No device ID provided"}
+
+        # Check cache
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_compliance_{device_id}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        endpoint = f"/dna/intent/api/v1/compliance/detail"
+        params = {"deviceUuid": device_id}
+        result = self._make_request(endpoint, params)
+
+        if "error" in result:
+            return result
+
+        compliance_list = result.get("response", [])
+
+        # Parse compliance records
+        compliance_info = {
+            "device_id": device_id,
+            "compliance_records": [],
+            "overall_status": "COMPLIANT",  # Assume compliant unless we find non-compliant
+            "cached": False,
+        }
+
+        for record in compliance_list:
+            comp_type = record.get("complianceType", "UNKNOWN")
+            status = record.get("status", "UNKNOWN")
+            state = record.get("state", "")
+            last_sync = record.get("lastSyncTime")
+            remediation = record.get("remediationSupported", False)
+
+            compliance_info["compliance_records"].append({
+                "type": comp_type,
+                "status": status,
+                "state": state,
+                "last_sync": last_sync,
+                "remediation_supported": remediation,
+            })
+
+            # Update overall status if any non-compliant found
+            if status == "NON_COMPLIANT":
+                compliance_info["overall_status"] = "NON_COMPLIANT"
+
+        # Cache the result
+        cache.set(cache_key, compliance_info, cache_timeout)
+
+        return compliance_info
+
+    def get_device_security_advisories(self, device_id):
+        """
+        Get security advisories (PSIRTs) affecting a device.
+
+        Args:
+            device_id: The Catalyst Center device UUID
+
+        Returns:
+            dict with advisory details
+        """
+        if not device_id:
+            return {"error": "No device ID provided"}
+
+        # Check cache
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_advisories_{device_id}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        endpoint = f"/dna/intent/api/v1/security-advisory/device/{device_id}"
+        result = self._make_request(endpoint)
+
+        if "error" in result:
+            return result
+
+        advisories_list = result.get("response", [])
+
+        # Parse advisories
+        advisory_info = {
+            "device_id": device_id,
+            "advisory_ids": [],
+            "advisory_count": 0,
+            "hidden_count": 0,
+            "scan_status": "UNKNOWN",
+            "last_scan_time": None,
+            "cached": False,
+        }
+
+        if advisories_list:
+            # API returns a single object with advisoryIds array
+            advisory_data = advisories_list[0] if isinstance(advisories_list, list) else advisories_list
+            advisory_info["advisory_ids"] = advisory_data.get("advisoryIds", [])
+            advisory_info["advisory_count"] = len(advisory_info["advisory_ids"])
+            advisory_info["hidden_count"] = advisory_data.get("hiddenAdvisoryCount", 0)
+            advisory_info["scan_status"] = advisory_data.get("scanStatus", "UNKNOWN")
+            advisory_info["last_scan_time"] = advisory_data.get("lastScanTime")
+
+        # Cache the result
+        cache.set(cache_key, advisory_info, cache_timeout)
+
+        return advisory_info
 
     def test_connection(self):
         """Test connection to Catalyst Center."""

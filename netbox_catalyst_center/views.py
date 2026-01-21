@@ -10,10 +10,11 @@ import re
 from django.conf import settings
 from django.contrib import messages
 from django.http import JsonResponse
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.views import View
 
 from dcim.models import Device
+from ipam.models import IPAddress
 from netbox.views import generic
 from utilities.views import ViewTab, register_model_view
 
@@ -95,12 +96,21 @@ def get_device_lookup_method(device):
             if not device_type_match:
                 continue
 
-        # Mapping matches! Check if device has required data
-        if lookup == "mac":
+        # Mapping matches! Return lookup type and check if device has required data
+        # lookup can be:
+        #   - "network_device" - tries ipAddress, then hostname, then fetches all (for Cisco infra)
+        #   - "client" - uses MAC address only (for wireless clients like Vocera)
+        #   - Legacy: "hostname", "ipAddress", "mac" still supported
+        if lookup == "client" or lookup == "mac":
+            # Wireless client lookup - MAC only
             mac = get_device_mac(device)
-            return "mac", mac is not None
-        else:  # hostname
-            return "hostname", bool(device.name)
+            return "client", mac is not None
+        else:
+            # Network device lookup - ipAddress > hostname > fetch all
+            # Check if device has hostname or IP
+            has_hostname = bool(device.name)
+            has_ip = device.primary_ip4 is not None or device.primary_ip6 is not None
+            return "network_device", (has_hostname or has_ip)
 
     return None, False
 
@@ -147,13 +157,32 @@ class DeviceCatalystCenterView(generic.ObjectView):
             # Determine lookup method based on device_mappings config
             lookup_method, has_data = get_device_lookup_method(device)
 
-            if lookup_method == "hostname":
-                # Network device - look up by hostname
-                client_data = client.get_network_device(device.name)
+            if lookup_method == "network_device":
+                # Network device lookup - tries IP first (most reliable), then hostname
+                management_ip = None
+                if device.primary_ip4:
+                    management_ip = str(device.primary_ip4.address.ip)
+                elif device.primary_ip6:
+                    management_ip = str(device.primary_ip6.address.ip)
+
+                client_data = client.get_network_device(device.name, management_ip=management_ip)
                 if "error" in client_data:
                     error = client_data.get("error")
                     client_data = {}
-            elif lookup_method == "mac":
+                else:
+                    # Fetch additional data if we have a device_id
+                    device_id = client_data.get("device_id")
+                    if device_id:
+                        # Get compliance status
+                        compliance_data = client.get_device_compliance(device_id)
+                        if "error" not in compliance_data:
+                            client_data["compliance"] = compliance_data
+
+                        # Get security advisories
+                        advisory_data = client.get_device_security_advisories(device_id)
+                        if "error" not in advisory_data:
+                            client_data["advisories"] = advisory_data
+            elif lookup_method == "client":
                 # Wireless client - look up by MAC address
                 mac_address = get_device_mac(device)
                 if mac_address:
@@ -271,3 +300,156 @@ class TestConnectionView(View):
                 "message": result.get("message"),
             }
         )
+
+
+class SyncDeviceFromDNACView(View):
+    """Sync device data from Catalyst Center to NetBox."""
+
+    def post(self, request, pk):
+        """
+        Sync selected fields from DNAC to NetBox device.
+
+        Supports syncing: IP address, serial number, SNMP location (to comments).
+        """
+        import json
+
+        try:
+            device = Device.objects.get(pk=pk)
+        except Device.DoesNotExist:
+            return JsonResponse({"success": False, "error": "Device not found"}, status=404)
+
+        # Parse sync options from request body
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            body = {}
+
+        sync_ip = body.get("sync_ip", True)  # Default to True for backwards compatibility
+        sync_serial = body.get("sync_serial", False)
+        sync_location = body.get("sync_location", False)
+
+        client = get_client()
+        if not client:
+            return JsonResponse({"success": False, "error": "Catalyst Center not configured"}, status=400)
+
+        # Get device data from DNAC
+        lookup_method, _ = get_device_lookup_method(device)
+
+        if lookup_method == "network_device":
+            # Get management IP for lookup
+            management_ip = None
+            if device.primary_ip4:
+                management_ip = str(device.primary_ip4.address.ip)
+            elif device.primary_ip6:
+                management_ip = str(device.primary_ip6.address.ip)
+
+            dnac_data = client.get_network_device(device.name, management_ip=management_ip)
+        elif lookup_method == "client":
+            mac_address = get_device_mac(device)
+            if mac_address:
+                dnac_data = client.get_client_detail(mac_address)
+            else:
+                return JsonResponse({"success": False, "error": "No MAC address found"}, status=400)
+        else:
+            return JsonResponse({"success": False, "error": "Device not configured for DNAC lookup"}, status=400)
+
+        if "error" in dnac_data:
+            return JsonResponse({"success": False, "error": dnac_data["error"]}, status=400)
+
+        changes = []
+        device_changed = False
+
+        # Sync IP address
+        if sync_ip:
+            dnac_ip = dnac_data.get("management_ip") or dnac_data.get("ip_address")
+            if dnac_ip:
+                ip_result = self._sync_ip_address(device, dnac_ip)
+                if ip_result.get("error"):
+                    return JsonResponse({"success": False, "error": ip_result["error"]}, status=400)
+                changes.extend(ip_result.get("changes", []))
+                if ip_result.get("changed"):
+                    device_changed = True
+
+        # Sync serial number
+        if sync_serial:
+            dnac_serial = dnac_data.get("serial_number")
+            if dnac_serial and device.serial != dnac_serial:
+                device.serial = dnac_serial
+                changes.append(f"Serial: {dnac_serial}")
+                device_changed = True
+
+        # Sync SNMP location to comments
+        if sync_location:
+            dnac_location = dnac_data.get("snmp_location")
+            if dnac_location:
+                # Append to comments if not already there
+                location_prefix = "SNMP Location: "
+                if location_prefix not in (device.comments or ""):
+                    if device.comments:
+                        device.comments = f"{device.comments}\n\n{location_prefix}{dnac_location}"
+                    else:
+                        device.comments = f"{location_prefix}{dnac_location}"
+                    changes.append(f"Added SNMP location to comments")
+                    device_changed = True
+
+        # Save device if any changes were made
+        if device_changed:
+            device.save()
+
+        if not changes:
+            return JsonResponse({
+                "success": True,
+                "message": "No changes needed - device is already in sync",
+                "changes": []
+            })
+
+        return JsonResponse({
+            "success": True,
+            "message": f"Synced {len(changes)} field(s) from Catalyst Center",
+            "changes": changes
+        })
+
+    def _sync_ip_address(self, device, dnac_ip):
+        """Sync IP address from DNAC to device. Returns dict with changes and error."""
+        ip_with_prefix = f"{dnac_ip}/32"
+        existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
+        changes = []
+        changed = False
+
+        if existing_ip:
+            # IP exists - check if it's assigned to this device
+            if existing_ip.assigned_object and existing_ip.assigned_object.device == device:
+                # Already assigned to this device, just set as primary if not already
+                if device.primary_ip4 != existing_ip:
+                    device.primary_ip4 = existing_ip
+                    changes.append(f"Primary IP: {dnac_ip}")
+                    changed = True
+            else:
+                # IP exists but assigned elsewhere or unassigned
+                interface = device.interfaces.first()
+                if not interface:
+                    return {"error": f"IP {dnac_ip} exists but device has no interfaces to assign it to"}
+
+                # Reassign the IP to this device's interface
+                existing_ip.assigned_object = interface
+                existing_ip.save()
+                device.primary_ip4 = existing_ip
+                changes.append(f"Primary IP: {dnac_ip} (reassigned)")
+                changed = True
+        else:
+            # IP doesn't exist - create it
+            interface = device.interfaces.first()
+            if not interface:
+                return {"error": "Device has no interfaces to assign IP to"}
+
+            new_ip = IPAddress(
+                address=ip_with_prefix,
+                assigned_object=interface,
+                description="Synced from Catalyst Center",
+            )
+            new_ip.save()
+            device.primary_ip4 = new_ip
+            changes.append(f"Primary IP: {dnac_ip} (created)")
+            changed = True
+
+        return {"changes": changes, "changed": changed}
