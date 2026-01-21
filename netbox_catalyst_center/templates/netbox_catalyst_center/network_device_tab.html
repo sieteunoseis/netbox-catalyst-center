@@ -222,9 +222,9 @@
                         <h5 class="card-title mb-0">
                             <i class="mdi mdi-clipboard-check"></i> Compliance Status
                             {% if client_data.compliance.overall_status == "NON_COMPLIANT" %}
-                            <span class="badge bg-danger ms-2">Non-Compliant</span>
+                            <span class="badge bg-danger text-white ms-2">Non-Compliant</span>
                             {% else %}
-                            <span class="badge bg-success ms-2">Compliant</span>
+                            <span class="badge bg-success text-white ms-2">Compliant</span>
                             {% endif %}
                         </h5>
                     </div>
@@ -242,15 +242,15 @@
                                     <td>{{ record.type }}</td>
                                     <td>
                                         {% if record.status == "COMPLIANT" %}
-                                        <span class="badge bg-success">Compliant</span>
+                                        <span class="badge bg-success text-white">Compliant</span>
                                         {% elif record.status == "NON_COMPLIANT" %}
-                                        <span class="badge bg-danger">Non-Compliant</span>
+                                        <span class="badge bg-danger text-white">Non-Compliant</span>
                                         {% elif record.status == "NOT_APPLICABLE" %}
-                                        <span class="badge bg-secondary">N/A</span>
+                                        <span class="badge bg-secondary text-white">N/A</span>
                                         {% elif record.status == "IN_PROGRESS" %}
                                         <span class="badge bg-warning text-dark">In Progress</span>
                                         {% else %}
-                                        <span class="badge bg-secondary">{{ record.status }}</span>
+                                        <span class="badge bg-secondary text-white">{{ record.status }}</span>
                                         {% endif %}
                                     </td>
                                 </tr>
@@ -276,7 +276,7 @@
                             {% if client_data.advisories.advisory_count > 0 %}
                             <span class="badge bg-warning text-dark ms-2">{{ client_data.advisories.advisory_count }} Advisory{{ client_data.advisories.advisory_count|pluralize:",ies" }}</span>
                             {% else %}
-                            <span class="badge bg-success ms-2">No Advisories</span>
+                            <span class="badge bg-success text-white ms-2">No Advisories</span>
                             {% endif %}
                         </h5>
                     </div>
