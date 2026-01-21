@@ -115,6 +115,115 @@
             </div>
         </div>
 
+        <!-- Device Search & Import -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-magnify"></i> Search & Import Devices from Catalyst Center
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Search for devices in Catalyst Center and import them to NetBox.
+                    Use <code>*</code> as a wildcard (e.g., <code>ADM*</code> or <code>10.77.*</code>).
+                </p>
+
+                <!-- Search Form -->
+                <div class="row g-2 mb-3">
+                    <div class="col-md-3">
+                        <select class="form-select" id="search-type">
+                            <option value="hostname">Hostname</option>
+                            <option value="ip">IP Address</option>
+                            <option value="mac">MAC Address</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <input type="text" class="form-control" id="search-value"
+                               placeholder="Enter search term (e.g., ADM* or 10.77.*)">
+                    </div>
+                    <div class="col-md-3">
+                        <button type="button" class="btn btn-primary w-100" id="search-btn">
+                            <i class="mdi mdi-magnify"></i> Search
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Search Results -->
+                <div id="search-results" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span id="result-count" class="text-muted"></span>
+                        <div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="select-all-btn">
+                                Select All New
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="deselect-all-btn">
+                                Deselect All
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-sm table-hover" id="results-table">
+                            <thead class="sticky-top bg-body">
+                                <tr>
+                                    <th style="width: 40px;"><input type="checkbox" id="select-all-checkbox"></th>
+                                    <th>Hostname</th>
+                                    <th>Management IP</th>
+                                    <th>Platform</th>
+                                    <th>Serial</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-body">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Import Options -->
+                    <div class="card mt-3 bg-body-secondary">
+                        <div class="card-body">
+                            <h6 class="card-title">Import Options</h6>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <label class="form-label">Default Site <span class="text-danger">*</span></label>
+                                    <select class="form-select" id="import-site" required>
+                                        <option value="">Select a site...</option>
+                                        {% for site in sites %}
+                                        <option value="{{ site.pk }}">{{ site.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Device Role (optional)</label>
+                                    <select class="form-select" id="import-role">
+                                        <option value="">Auto-detect from DNAC</option>
+                                        {% for role in roles %}
+                                        <option value="{{ role.pk }}">{{ role.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <button type="button" class="btn btn-success" id="import-btn" disabled>
+                                    <i class="mdi mdi-import"></i> Import Selected Devices
+                                </button>
+                                <span id="selected-count" class="ms-2 text-muted">0 devices selected</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Import Results -->
+                    <div id="import-results" class="mt-3" style="display: none;"></div>
+                </div>
+
+                <!-- Loading indicator -->
+                <div id="search-loading" style="display: none;" class="text-center py-4">
+                    <i class="mdi mdi-loading mdi-spin mdi-48px"></i>
+                    <p class="mt-2">Searching Catalyst Center...</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Configuration Help -->
         <div class="card mt-3">
             <div class="card-header">
@@ -191,6 +300,7 @@ PLUGINS_CONFIG = {
 </div>
 
 <script>
+// Test Connection
 document.getElementById('test-connection-btn').addEventListener('click', function() {
     var btn = this;
     var resultDiv = document.getElementById('test-result');
@@ -220,6 +330,229 @@ document.getElementById('test-connection-btn').addEventListener('click', functio
     .finally(() => {
         btn.disabled = false;
         btn.innerHTML = '<i class="mdi mdi-play"></i> Test Connection';
+    });
+});
+
+// Device Search & Import
+var searchResults = [];
+
+// Search button
+document.getElementById('search-btn').addEventListener('click', function() {
+    var searchType = document.getElementById('search-type').value;
+    var searchValue = document.getElementById('search-value').value.trim();
+
+    if (!searchValue) {
+        alert('Please enter a search term');
+        return;
+    }
+
+    // Show loading
+    document.getElementById('search-loading').style.display = 'block';
+    document.getElementById('search-results').style.display = 'none';
+
+    var url = '{% url "plugins:netbox_catalyst_center:search_devices" %}?search_type=' + encodeURIComponent(searchType) + '&search_value=' + encodeURIComponent(searchValue);
+
+    fetch(url, {
+        method: 'GET',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('search-loading').style.display = 'none';
+
+        if (data.error) {
+            alert('Search error: ' + data.error);
+            return;
+        }
+
+        searchResults = data.devices || [];
+        renderSearchResults(searchResults, data.total_in_dnac);
+        document.getElementById('search-results').style.display = 'block';
+    })
+    .catch(error => {
+        document.getElementById('search-loading').style.display = 'none';
+        alert('Search failed: ' + error);
+    });
+});
+
+// Allow Enter key in search box
+document.getElementById('search-value').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        document.getElementById('search-btn').click();
+    }
+});
+
+function renderSearchResults(devices, totalInDnac) {
+    var tbody = document.getElementById('results-body');
+    tbody.innerHTML = '';
+
+    document.getElementById('result-count').textContent =
+        devices.length + ' devices found (out of ' + totalInDnac + ' total in Catalyst Center)';
+
+    devices.forEach(function(device, index) {
+        var row = document.createElement('tr');
+        if (device.exists_in_netbox) {
+            row.classList.add('table-secondary');
+        }
+
+        var checkbox = device.exists_in_netbox
+            ? '<input type="checkbox" disabled title="Already exists in NetBox">'
+            : '<input type="checkbox" class="device-checkbox" data-index="' + index + '">';
+
+        var statusBadge = device.exists_in_netbox
+            ? '<a href="' + device.netbox_device_url + '" class="badge bg-success text-white">In NetBox</a>'
+            : '<span class="badge bg-warning text-dark">New</span>';
+
+        var reachability = device.reachability_status === 'Reachable'
+            ? '<i class="mdi mdi-check-circle text-success" title="Reachable"></i>'
+            : '<i class="mdi mdi-alert-circle text-warning" title="' + (device.reachability_status || 'Unknown') + '"></i>';
+
+        row.innerHTML =
+            '<td>' + checkbox + '</td>' +
+            '<td>' + (device.hostname || 'N/A') + ' ' + reachability + '</td>' +
+            '<td><code>' + (device.management_ip || 'N/A') + '</code></td>' +
+            '<td><small>' + (device.platform || device.device_family || 'N/A') + '</small></td>' +
+            '<td><small>' + (device.serial_number || 'N/A') + '</small></td>' +
+            '<td>' + statusBadge + '</td>';
+
+        tbody.appendChild(row);
+    });
+
+    updateSelectedCount();
+}
+
+// Checkbox handlers
+document.getElementById('results-body').addEventListener('change', function(e) {
+    if (e.target.classList.contains('device-checkbox')) {
+        updateSelectedCount();
+    }
+});
+
+document.getElementById('select-all-checkbox').addEventListener('change', function() {
+    var checked = this.checked;
+    document.querySelectorAll('.device-checkbox').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    updateSelectedCount();
+});
+
+document.getElementById('select-all-btn').addEventListener('click', function() {
+    document.querySelectorAll('.device-checkbox').forEach(function(cb) {
+        cb.checked = true;
+    });
+    document.getElementById('select-all-checkbox').checked = true;
+    updateSelectedCount();
+});
+
+document.getElementById('deselect-all-btn').addEventListener('click', function() {
+    document.querySelectorAll('.device-checkbox').forEach(function(cb) {
+        cb.checked = false;
+    });
+    document.getElementById('select-all-checkbox').checked = false;
+    updateSelectedCount();
+});
+
+function updateSelectedCount() {
+    var count = document.querySelectorAll('.device-checkbox:checked').length;
+    document.getElementById('selected-count').textContent = count + ' device(s) selected';
+    document.getElementById('import-btn').disabled = count === 0;
+}
+
+// Import button
+document.getElementById('import-btn').addEventListener('click', function() {
+    var siteId = document.getElementById('import-site').value;
+    if (!siteId) {
+        alert('Please select a default site');
+        return;
+    }
+
+    var selectedDevices = [];
+    document.querySelectorAll('.device-checkbox:checked').forEach(function(cb) {
+        var index = parseInt(cb.getAttribute('data-index'));
+        selectedDevices.push(searchResults[index]);
+    });
+
+    if (selectedDevices.length === 0) {
+        alert('Please select at least one device');
+        return;
+    }
+
+    if (!confirm('Import ' + selectedDevices.length + ' device(s) to NetBox?')) {
+        return;
+    }
+
+    var btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Importing...';
+
+    var roleId = document.getElementById('import-role').value;
+
+    fetch('{% url "plugins:netbox_catalyst_center:import_devices" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            devices: selectedDevices,
+            default_site_id: parseInt(siteId),
+            default_role_id: roleId ? parseInt(roleId) : null
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        var resultsDiv = document.getElementById('import-results');
+        resultsDiv.style.display = 'block';
+
+        if (data.error) {
+            resultsDiv.innerHTML = '<div class="alert alert-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</div>';
+        } else {
+            var html = '<div class="alert alert-success">' +
+                '<strong><i class="mdi mdi-check-circle"></i> Import Complete</strong><br>' +
+                'Created: ' + data.created_count + ', Skipped: ' + data.skipped_count + ', Errors: ' + data.error_count +
+                '</div>';
+
+            if (data.results.created.length > 0) {
+                html += '<div class="mb-2"><strong>Created:</strong></div><ul class="list-unstyled">';
+                data.results.created.forEach(function(d) {
+                    html += '<li><i class="mdi mdi-check text-success"></i> <a href="/dcim/devices/' + d.netbox_id + '/">' + d.hostname + '</a> (' + d.device_type + ')</li>';
+                });
+                html += '</ul>';
+            }
+
+            if (data.results.skipped.length > 0) {
+                html += '<div class="mb-2"><strong>Skipped:</strong></div><ul class="list-unstyled">';
+                data.results.skipped.forEach(function(d) {
+                    html += '<li><i class="mdi mdi-skip-next text-warning"></i> ' + d.hostname + ' - ' + d.reason + '</li>';
+                });
+                html += '</ul>';
+            }
+
+            if (data.results.errors.length > 0) {
+                html += '<div class="mb-2"><strong>Errors:</strong></div><ul class="list-unstyled">';
+                data.results.errors.forEach(function(d) {
+                    html += '<li><i class="mdi mdi-alert text-danger"></i> ' + d.hostname + ' - ' + d.error + '</li>';
+                });
+                html += '</ul>';
+            }
+
+            resultsDiv.innerHTML = html;
+
+            // Refresh search to update "exists" status
+            document.getElementById('search-btn').click();
+        }
+    })
+    .catch(error => {
+        document.getElementById('import-results').innerHTML =
+            '<div class="alert alert-danger"><i class="mdi mdi-alert-circle"></i> Import failed: ' + error + '</div>';
+        document.getElementById('import-results').style.display = 'block';
+    })
+    .finally(function() {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="mdi mdi-import"></i> Import Selected Devices';
+        updateSelectedCount();
     });
 });
 </script>

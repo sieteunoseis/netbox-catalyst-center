@@ -305,7 +305,30 @@ class CatalystCenterClient:
                             break
 
         if not device_data:
-            return {"error": f"Device '{hostname}' not found in Catalyst Center inventory"}
+            # Build helpful error message with search context
+            search_details = []
+            if management_ip:
+                search_details.append(f"IP: {management_ip}")
+            search_details.append(f"Hostname: {hostname}")
+
+            # Find similar hostnames to help troubleshoot
+            similar_devices = []
+            if all_devices:
+                search_prefix = base_hostname[:3].lower() if len(base_hostname) >= 3 else base_hostname.lower()
+                for device in all_devices[:500]:  # Limit scan
+                    dnac_hostname = device.get("hostname", "").lower()
+                    if dnac_hostname.startswith(search_prefix):
+                        similar_devices.append(dnac_hostname)
+                    if len(similar_devices) >= 5:
+                        break
+
+            error_msg = f"Device not found in Catalyst Center inventory. Searched by: {', '.join(search_details)}"
+            if similar_devices:
+                error_msg += f". Similar devices found: {', '.join(similar_devices)}"
+            else:
+                error_msg += ". No similar devices found with that prefix."
+
+            return {"error": error_msg}
 
         # Extract relevant fields for network devices
         device_info = {
@@ -466,6 +489,103 @@ class CatalystCenterClient:
         cache.set(cache_key, advisory_info, cache_timeout)
 
         return advisory_info
+
+    def search_devices(self, search_type, search_value, limit=50):
+        """
+        Search for devices in Catalyst Center inventory.
+
+        Args:
+            search_type: "hostname", "ip", or "mac"
+            search_value: Search term (supports * wildcard)
+            limit: Maximum number of results to return
+
+        Returns:
+            dict with "devices" array or "error"
+        """
+        endpoint = "/dna/intent/api/v1/network-device"
+
+        # Convert user-friendly wildcard (*) to regex pattern for local filtering
+        # DNAC API doesn't support wildcards well, so we fetch and filter locally
+        search_pattern = search_value.lower().replace("*", ".*")
+        if not search_pattern.startswith(".*"):
+            search_pattern = f"^{search_pattern}"
+        if not search_pattern.endswith(".*"):
+            search_pattern = f"{search_pattern}$"
+
+        try:
+            import re
+
+            pattern = re.compile(search_pattern, re.IGNORECASE)
+        except re.error:
+            return {"error": f"Invalid search pattern: {search_value}"}
+
+        # Fetch all devices (use cached list if available)
+        all_devices_cache_key = "catalyst_all_devices_search"
+        all_devices = cache.get(all_devices_cache_key)
+
+        if not all_devices:
+            result = self._make_request(endpoint)
+            if "error" in result:
+                return result
+            all_devices = result.get("response", [])
+            # Cache for 2 minutes
+            cache.set(all_devices_cache_key, all_devices, 120)
+
+        # Filter devices based on search type
+        matched_devices = []
+        for device in all_devices:
+            match = False
+
+            if search_type == "hostname":
+                hostname = device.get("hostname", "") or ""
+                # Also check without domain suffix
+                hostname_base = hostname.lower().replace(".ohsu.edu", "")
+                if pattern.search(hostname) or pattern.search(hostname_base):
+                    match = True
+
+            elif search_type == "ip":
+                ip = device.get("managementIpAddress", "") or ""
+                if pattern.search(ip):
+                    match = True
+
+            elif search_type == "mac":
+                mac = device.get("macAddress", "") or ""
+                # Normalize MAC format for comparison
+                mac_normalized = mac.lower().replace(":", "").replace("-", "")
+                search_normalized = search_value.lower().replace(":", "").replace("-", "").replace("*", ".*")
+                try:
+                    mac_pattern = re.compile(f"^{search_normalized}$", re.IGNORECASE)
+                    if mac_pattern.search(mac_normalized) or mac_pattern.search(mac):
+                        match = True
+                except re.error:
+                    pass
+
+            if match:
+                matched_devices.append(
+                    {
+                        "hostname": device.get("hostname"),
+                        "management_ip": device.get("managementIpAddress"),
+                        "serial_number": device.get("serialNumber"),
+                        "mac_address": device.get("macAddress"),
+                        "platform": device.get("platformId"),
+                        "software_version": device.get("softwareVersion"),
+                        "device_family": device.get("family"),
+                        "series": device.get("series"),
+                        "role": device.get("role"),
+                        "reachability_status": device.get("reachabilityStatus"),
+                        "snmp_location": device.get("snmpLocation"),
+                        "device_id": device.get("id"),
+                    }
+                )
+
+                if len(matched_devices) >= limit:
+                    break
+
+        return {
+            "devices": matched_devices,
+            "total_matched": len(matched_devices),
+            "total_in_dnac": len(all_devices),
+        }
 
     def test_connection(self):
         """Test connection to Catalyst Center."""

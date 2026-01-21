@@ -231,6 +231,17 @@ class CatalystCenterSettingsView(View):
         """Get current plugin configuration."""
         return settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
 
+    def get_context(self, form, config):
+        """Build context with sites and roles for import feature."""
+        from dcim.models import DeviceRole, Site
+
+        return {
+            "form": form,
+            "config": config,
+            "sites": Site.objects.all().order_by("name"),
+            "roles": DeviceRole.objects.all().order_by("name"),
+        }
+
     def get(self, request):
         """Display the settings form."""
         config = self.get_current_config()
@@ -239,10 +250,7 @@ class CatalystCenterSettingsView(View):
         return render(
             request,
             self.template_name,
-            {
-                "form": form,
-                "config": config,
-            },
+            self.get_context(form, config),
         )
 
     def post(self, request):
@@ -261,10 +269,7 @@ class CatalystCenterSettingsView(View):
         return render(
             request,
             self.template_name,
-            {
-                "form": form,
-                "config": self.get_current_config(),
-            },
+            self.get_context(form, self.get_current_config()),
         )
 
 
@@ -450,3 +455,248 @@ class SyncDeviceFromDNACView(View):
             changed = True
 
         return {"changes": changes, "changed": changed}
+
+
+class SearchDevicesView(View):
+    """Search for devices in Catalyst Center inventory."""
+
+    def get(self, request):
+        """
+        Search for devices in Catalyst Center.
+
+        Query parameters:
+            search_type: "hostname", "ip", or "mac"
+            search_value: Search term (supports * wildcard)
+            limit: Maximum results (default 50)
+        """
+        search_type = request.GET.get("search_type", "hostname")
+        search_value = request.GET.get("search_value", "").strip()
+        limit = int(request.GET.get("limit", 50))
+
+        if not search_value:
+            return JsonResponse({"error": "Search value is required"}, status=400)
+
+        if search_type not in ("hostname", "ip", "mac"):
+            return JsonResponse({"error": "Invalid search type"}, status=400)
+
+        client = get_client()
+        if not client:
+            return JsonResponse({"error": "Catalyst Center not configured"}, status=400)
+
+        result = client.search_devices(search_type, search_value, limit)
+
+        if "error" in result:
+            return JsonResponse({"error": result["error"]}, status=400)
+
+        # Check which devices already exist in NetBox
+        devices = result.get("devices", [])
+        for device in devices:
+            hostname = device.get("hostname", "")
+            serial = device.get("serial_number", "")
+
+            # Check if device exists by hostname or serial
+            existing = None
+            if hostname:
+                hostname_base = hostname.lower().replace(".ohsu.edu", "")
+                existing = Device.objects.filter(name__iexact=hostname_base).first()
+                if not existing:
+                    existing = Device.objects.filter(name__iexact=hostname).first()
+
+            if not existing and serial:
+                existing = Device.objects.filter(serial=serial).first()
+
+            device["exists_in_netbox"] = existing is not None
+            device["netbox_device_id"] = existing.pk if existing else None
+            device["netbox_device_url"] = existing.get_absolute_url() if existing else None
+
+        return JsonResponse(result)
+
+
+class ImportDevicesView(View):
+    """Import devices from Catalyst Center to NetBox."""
+
+    def post(self, request):
+        """
+        Import selected devices from Catalyst Center to NetBox.
+
+        Request body (JSON):
+            devices: Array of device objects from search results
+            default_site_id: Site ID to assign devices to
+            default_role_id: Device role ID (optional)
+        """
+        import json
+
+        from dcim.models import DeviceRole, DeviceType, Interface, Manufacturer, Site
+
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        devices_to_import = body.get("devices", [])
+        default_site_id = body.get("default_site_id")
+        default_role_id = body.get("default_role_id")
+
+        if not devices_to_import:
+            return JsonResponse({"error": "No devices to import"}, status=400)
+
+        if not default_site_id:
+            return JsonResponse({"error": "Default site is required"}, status=400)
+
+        # Get default site
+        try:
+            default_site = Site.objects.get(pk=default_site_id)
+        except Site.DoesNotExist:
+            return JsonResponse({"error": "Site not found"}, status=400)
+
+        # Get default role if specified
+        default_role = None
+        if default_role_id:
+            try:
+                default_role = DeviceRole.objects.get(pk=default_role_id)
+            except DeviceRole.DoesNotExist:
+                pass
+
+        # Get or create Cisco manufacturer
+        cisco_manufacturer, _ = Manufacturer.objects.get_or_create(
+            slug="cisco",
+            defaults={"name": "Cisco"},
+        )
+
+        results = {
+            "created": [],
+            "skipped": [],
+            "errors": [],
+        }
+
+        for dnac_device in devices_to_import:
+            hostname = dnac_device.get("hostname", "")
+            serial = dnac_device.get("serial_number", "")
+            platform = dnac_device.get("platform", "")
+            management_ip = dnac_device.get("management_ip", "")
+
+            if not hostname:
+                results["errors"].append({"device": dnac_device, "error": "No hostname"})
+                continue
+
+            # Normalize hostname (remove domain)
+            hostname_base = hostname.replace(".ohsu.edu", "")
+
+            # Check if device already exists
+            existing = Device.objects.filter(name__iexact=hostname_base).first()
+            if not existing and serial:
+                existing = Device.objects.filter(serial=serial).first()
+
+            if existing:
+                results["skipped"].append(
+                    {
+                        "hostname": hostname_base,
+                        "reason": "Already exists in NetBox",
+                        "netbox_id": existing.pk,
+                    }
+                )
+                continue
+
+            # Get or create device type based on platform
+            if platform:
+                device_type, _ = DeviceType.objects.get_or_create(
+                    manufacturer=cisco_manufacturer,
+                    model=platform,
+                    defaults={
+                        "slug": platform.lower().replace(" ", "-").replace("/", "-"),
+                    },
+                )
+            else:
+                # Use generic type if platform unknown
+                device_type, _ = DeviceType.objects.get_or_create(
+                    manufacturer=cisco_manufacturer,
+                    model="Unknown",
+                    defaults={"slug": "cisco-unknown"},
+                )
+
+            # Determine device role from DNAC role if no default specified
+            role = default_role
+            if not role:
+                dnac_role = dnac_device.get("role", "").upper()
+                role_mapping = {
+                    "ACCESS": "access-switch",
+                    "DISTRIBUTION": "distribution-switch",
+                    "CORE": "core-switch",
+                    "BORDER ROUTER": "router",
+                    "UNKNOWN": "network-device",
+                }
+                role_slug = role_mapping.get(dnac_role, "network-device")
+                role, _ = DeviceRole.objects.get_or_create(
+                    slug=role_slug,
+                    defaults={"name": role_slug.replace("-", " ").title()},
+                )
+
+            try:
+                # Create the device
+                new_device = Device(
+                    name=hostname_base,
+                    device_type=device_type,
+                    role=role,
+                    site=default_site,
+                    serial=serial or "",
+                    status="active",
+                    comments=f"Imported from Catalyst Center\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
+                )
+                new_device.save()
+
+                # Create a management interface
+                mgmt_interface = Interface(
+                    device=new_device,
+                    name="Management",
+                    type="virtual",
+                )
+                mgmt_interface.save()
+
+                # Create IP address if available
+                if management_ip:
+                    ip_with_prefix = f"{management_ip}/32"
+                    existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
+
+                    if existing_ip:
+                        # IP exists - reassign to this device
+                        existing_ip.assigned_object = mgmt_interface
+                        existing_ip.save()
+                        new_device.primary_ip4 = existing_ip
+                    else:
+                        # Create new IP
+                        new_ip = IPAddress(
+                            address=ip_with_prefix,
+                            assigned_object=mgmt_interface,
+                            description="Management IP from Catalyst Center",
+                        )
+                        new_ip.save()
+                        new_device.primary_ip4 = new_ip
+
+                    new_device.save()
+
+                results["created"].append(
+                    {
+                        "hostname": hostname_base,
+                        "netbox_id": new_device.pk,
+                        "device_type": device_type.model,
+                        "ip": management_ip,
+                    }
+                )
+
+            except Exception as e:
+                results["errors"].append(
+                    {
+                        "hostname": hostname_base,
+                        "error": str(e),
+                    }
+                )
+
+        return JsonResponse(
+            {
+                "success": True,
+                "created_count": len(results["created"]),
+                "skipped_count": len(results["skipped"]),
+                "error_count": len(results["errors"]),
+                "results": results,
+            }
+        )
