@@ -62,9 +62,9 @@
                         <th>Verify SSL</th>
                         <td>
                             {% if config.verify_ssl %}
-                            <span class="badge bg-success">Enabled</span>
+                            <span class="badge bg-success text-white">Enabled</span>
                             {% else %}
-                            <span class="badge bg-warning">Disabled</span>
+                            <span class="badge bg-warning text-dark">Disabled</span>
                             {% endif %}
                         </td>
                     </tr>
@@ -91,7 +91,7 @@
                                 <span class="badge bg-info text-dark">Client</span>
                                 <small class="text-muted">(MAC lookup via Client API)</small>
                                 {% else %}
-                                <span class="badge bg-primary">Network Device</span>
+                                <span class="badge bg-primary text-white">Network Device</span>
                                 <small class="text-muted">(IP &rarr; Hostname &rarr; All devices)</small>
                                 {% endif %}
                             </td>

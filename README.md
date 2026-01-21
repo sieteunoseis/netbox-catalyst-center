@@ -1,23 +1,40 @@
 # NetBox Catalyst Center Plugin
 
-A NetBox plugin that displays Cisco Catalyst Center (formerly DNA Center) client details on Device pages.
+A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with NetBox, displaying network device details, wireless client information, compliance status, and security advisories.
 
 ![NetBox Version](https://img.shields.io/badge/NetBox-4.0+-blue)
 ![Python Version](https://img.shields.io/badge/Python-3.10+-green)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![CI](https://github.com/sieteunoseis/netbox-catalyst-center/actions/workflows/ci.yml/badge.svg)](https://github.com/sieteunoseis/netbox-catalyst-center/actions/workflows/ci.yml)
 
 ## Features
 
-- **Client Details Tab**: Adds a "Catalyst Center" tab to Device detail pages
+### Network Device Integration
+- **Device Details Tab**: Adds a "Catalyst Center" tab to Device detail pages
+- **Reachability Status**: Shows device reachability and collection status
+- **Software Information**: Displays software version, platform, and series
+- **Compliance Status**: Shows PSIRT, IMAGE, CONFIG, and EOX compliance
+- **Security Advisories**: Lists PSIRT advisories with links to Cisco security portal
+- **Sync to NetBox**: Sync IP address, serial number, and SNMP location from Catalyst Center
+
+### Wireless Client Support
 - **Real-time IP Lookup**: Shows current IP address for wireless clients
 - **Connection Status**: Displays connected/disconnected state with health score
 - **AP Information**: Shows connected access point, SSID, and location
 - **Signal Quality**: Displays RSSI, SNR, and data rate for wireless clients
+
+### General Features
+- **Configurable Device Mappings**: Control which devices show the tab and lookup method
+- **Multi-strategy Lookup**: IP address → hostname → fetch all with local filtering
 - **Caching**: Caches API responses to reduce load on Catalyst Center
 
 ## Screenshots
 
-*Coming soon*
+### Device Tab - Network Device View
+![Network Device Tab](screenshots/netbox-catalyst-center.png)
+
+### Settings Page
+![Settings](screenshots/netbox-catalyst-center-settings.png)
 
 ## Requirements
 
@@ -82,6 +99,18 @@ PLUGINS_CONFIG = {
         'timeout': 30,           # API timeout in seconds
         'cache_timeout': 60,     # Cache duration in seconds
         'verify_ssl': False,     # Verify SSL certificates
+
+        # Device mappings: Control which devices show the tab
+        # manufacturer/device_type are regex patterns matched against slug and name
+        # lookup types:
+        #   "network_device" - tries IP → hostname → fetch all (for Cisco infrastructure)
+        #   "client" - MAC address only (for wireless clients like Vocera badges)
+        'device_mappings': [
+            # Cisco network devices (gateways, switches, APs)
+            {'manufacturer': 'cisco', 'lookup': 'network_device'},
+            # Vocera badges - lookup by MAC address
+            {'manufacturer': 'vocera', 'lookup': 'client'},
+        ],
     }
 }
 ```
