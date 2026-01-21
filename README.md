@@ -95,25 +95,33 @@ PLUGINS_CONFIG = {
         'catalyst_center_username': 'api-user',
         'catalyst_center_password': 'your-password',
 
-        # Optional settings with defaults:
-        'timeout': 30,           # API timeout in seconds
-        'cache_timeout': 60,     # Cache duration in seconds
-        'verify_ssl': False,     # Verify SSL certificates
+        # Optional settings
+        'timeout': 30,           # API timeout in seconds (default: 30)
+        'cache_timeout': 60,     # Cache duration in seconds (default: 60)
+        'verify_ssl': False,     # Verify SSL certificates (default: False)
 
-        # Device mappings: Control which devices show the tab
-        # manufacturer/device_type are regex patterns matched against slug and name
-        # lookup types:
-        #   "network_device" - tries IP → hostname → fetch all (for Cisco infrastructure)
-        #   "client" - MAC address only (for wireless clients like Vocera badges)
+        # Device mappings (REQUIRED) - Controls which devices show the Catalyst Center tab
+        # Each mapping specifies:
+        #   - manufacturer: Regex pattern to match device manufacturer (slug or name)
+        #   - device_type: Optional regex pattern to match device type (slug or model)
+        #   - lookup: How to find the device in Catalyst Center:
+        #       "network_device" - Uses IP → hostname → fetch all (for switches, routers, APs)
+        #       "client" - Uses MAC address via Client API (for wireless clients)
         'device_mappings': [
-            # Cisco network devices (gateways, switches, APs)
+            # All Cisco devices - lookup as network devices
             {'manufacturer': 'cisco', 'lookup': 'network_device'},
-            # Vocera badges - lookup by MAC address
+
+            # Vocera badges - lookup by MAC address as wireless clients
             {'manufacturer': 'vocera', 'lookup': 'client'},
+
+            # Example: Specific device type only
+            # {'manufacturer': 'cisco', 'device_type': 'catalyst-9300', 'lookup': 'network_device'},
         ],
     }
 }
 ```
+
+> **Note:** The `device_mappings` configuration is required. Without it, the Catalyst Center tab will not appear on any devices.
 
 ### Catalyst Center API User
 
