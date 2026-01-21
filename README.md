@@ -35,6 +35,9 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 ### Device Tab - Network Device View
 ![Network Device Tab](screenshots/netbox-catalyst-center.png)
 
+### Device Tab - Wireless Client View
+![Wireless Client Tab](screenshots/netbox-catalyst-center-client.png)
+
 ### Settings Page
 ![Settings](screenshots/netbox-catalyst-center-settings.png)
 
