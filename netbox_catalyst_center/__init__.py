@@ -33,6 +33,20 @@ class CatalystCenterConfig(PluginConfig):
         "timeout": 30,  # API timeout in seconds
         "cache_timeout": 60,  # Cache results for 60 seconds
         "verify_ssl": False,  # Skip SSL verification for self-signed certs
+
+        # Device types to show tab for and lookup method
+        # Format: list of dicts with manufacturer (regex), device_type (regex, optional), lookup method
+        # lookup: "hostname" = network device lookup, "mac" = wireless client lookup
+        #
+        # Example:
+        # "device_mappings": [
+        #     {"manufacturer": "cisco.*", "lookup": "hostname"},  # All Cisco devices by hostname
+        #     {"manufacturer": "vocera", "lookup": "mac"},  # Vocera badges by MAC
+        #     {"manufacturer": "cisco", "device_type": ".*phone.*", "lookup": "mac"},  # Cisco phones by MAC
+        # ]
+        "device_mappings": [
+            {"manufacturer": r"cisco", "lookup": "hostname"},  # Cisco devices by hostname
+        ],
     }
 
 

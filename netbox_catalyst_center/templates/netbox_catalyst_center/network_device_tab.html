@@ -1,0 +1,237 @@
+{% extends 'dcim/device/base.html' %}
+{% load helpers %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        {% if error %}
+        <div class="alert alert-warning">
+            <i class="mdi mdi-alert"></i> {{ error }}
+        </div>
+        {% elif client_data %}
+        <div class="row">
+            <!-- Reachability Status Card -->
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-lan-connect"></i> Reachability Status
+                        </h5>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if client_data.connected %}
+                        <div class="p-3 mb-2 bg-success rounded">
+                            <span class="text-white fs-3 fw-bold">
+                                <i class="mdi mdi-check-circle"></i> Reachable
+                            </span>
+                        </div>
+                        {% else %}
+                        <div class="p-3 mb-2 bg-danger rounded">
+                            <span class="text-white fs-3 fw-bold">
+                                <i class="mdi mdi-close-circle"></i> {{ client_data.connection_status|default:"Unreachable" }}
+                            </span>
+                        </div>
+                        {% if client_data.reachability_failure_reason %}
+                        <div class="text-muted small mt-2">
+                            {{ client_data.reachability_failure_reason }}
+                        </div>
+                        {% endif %}
+                        {% endif %}
+
+                        {% if client_data.collection_status %}
+                        <div class="mt-3">
+                            {% if client_data.collection_status == "Managed" %}
+                            <span class="badge" style="background-color: #0d6efd; color: white;">{{ client_data.collection_status }}</span>
+                            {% elif client_data.collection_status == "In Progress" %}
+                            <span class="badge" style="background-color: #ffc107; color: #212529;">{{ client_data.collection_status }}</span>
+                            {% elif client_data.collection_status == "Partial Collection Failure" or client_data.collection_status == "Could Not Synchronize" %}
+                            <span class="badge bg-danger text-white">{{ client_data.collection_status }}</span>
+                            {% else %}
+                            <span class="badge" style="background-color: #6c757d; color: white;">{{ client_data.collection_status }}</span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {% if client_data.uptime %}
+                        <div class="mt-3">
+                            <span class="fs-6 text-muted">Uptime:</span>
+                            <div class="fs-5 fw-bold">{{ client_data.uptime }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device Details Card -->
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-router"></i> Device Details
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm table-borderless mb-0">
+                            <tr>
+                                <th>Hostname:</th>
+                                <td><code>{{ client_data.hostname }}</code></td>
+                            </tr>
+                            <tr>
+                                <th>Management IP:</th>
+                                <td>
+                                    {% if client_data.management_ip %}
+                                    <code>{{ client_data.management_ip }}</code>
+                                    {% else %}
+                                    <span class="text-muted">N/A</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Serial Number:</th>
+                                <td>{{ client_data.serial_number|default:"N/A" }}</td>
+                            </tr>
+                            <tr>
+                                <th>MAC Address:</th>
+                                <td>
+                                    {% if client_data.mac_address %}
+                                    <code>{{ client_data.mac_address }}</code>
+                                    {% else %}
+                                    <span class="text-muted">N/A</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% if client_data.role %}
+                            <tr>
+                                <th>Role:</th>
+                                <td>{{ client_data.role }}</td>
+                            </tr>
+                            {% endif %}
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Software & Platform Card -->
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-cog"></i> Software & Platform
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm table-borderless mb-0">
+                            <tr>
+                                <th>Software Version:</th>
+                                <td><code>{{ client_data.software_version|default:"N/A" }}</code></td>
+                            </tr>
+                            {% if client_data.software_type %}
+                            <tr>
+                                <th>Software Type:</th>
+                                <td>{{ client_data.software_type }}</td>
+                            </tr>
+                            {% endif %}
+                            <tr>
+                                <th>Platform:</th>
+                                <td>{{ client_data.platform|default:"N/A" }}</td>
+                            </tr>
+                            <tr>
+                                <th>Series:</th>
+                                <td>{{ client_data.series|default:"N/A" }}</td>
+                            </tr>
+                            <tr>
+                                <th>Device Family:</th>
+                                <td>{{ client_data.device_family|default:"N/A" }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Location & SNMP Card -->
+        {% if client_data.snmp_location or client_data.snmp_contact %}
+        <div class="row">
+            <div class="col-12 mb-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-map-marker"></i> Location & Contact
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% if client_data.snmp_location %}
+                            <div class="col-md-8">
+                                <strong>SNMP Location:</strong>
+                                <div class="mt-1">{{ client_data.snmp_location }}</div>
+                            </div>
+                            {% endif %}
+                            {% if client_data.snmp_contact %}
+                            <div class="col-md-4">
+                                <strong>SNMP Contact:</strong>
+                                <div class="mt-1">{{ client_data.snmp_contact }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Boot Time & Last Updated -->
+        {% if client_data.boot_time or client_data.last_updated %}
+        <div class="row">
+            <div class="col-12 mb-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="mdi mdi-clock-outline"></i> Timestamps
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% if client_data.boot_time %}
+                            <div class="col-md-6">
+                                <strong>Boot Time:</strong>
+                                <div class="mt-1 text-muted">{{ client_data.boot_time }}</div>
+                            </div>
+                            {% endif %}
+                            {% if client_data.last_updated %}
+                            <div class="col-md-6">
+                                <strong>Last Updated in DNAC:</strong>
+                                <div class="mt-1 text-muted">{{ client_data.last_updated }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Cache indicator -->
+        {% if client_data.cached %}
+        <div class="text-muted small mt-2">
+            <i class="mdi mdi-cached"></i> Data from cache
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="alert alert-info">
+            <i class="mdi mdi-information"></i> No device data available from Catalyst Center. The device may not be in the DNAC inventory.
+        </div>
+        {% endif %}
+
+        <!-- External link to Catalyst Center -->
+        {% if catalyst_url %}
+        <div class="mt-3">
+            <a href="{{ catalyst_url }}" target="_blank" class="btn btn-outline-primary btn-sm">
+                <i class="mdi mdi-open-in-new"></i> Open Catalyst Center
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

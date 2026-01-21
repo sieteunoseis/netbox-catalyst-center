@@ -5,6 +5,8 @@ Registers custom tabs on Device detail views to show Catalyst Center client info
 Provides settings configuration UI.
 """
 
+import re
+
 from django.conf import settings
 from django.contrib import messages
 from django.http import JsonResponse
@@ -19,6 +21,101 @@ from .forms import CatalystCenterSettingsForm
 from .catalyst_client import get_client
 
 
+def is_valid_mac(value):
+    """Check if a value looks like a MAC address."""
+    if not value:
+        return False
+    # Remove common separators and check if it's 12 hex characters
+    cleaned = re.sub(r'[:\-\.]', '', value.lower())
+    return bool(re.match(r'^[0-9a-f]{12}$', cleaned))
+
+
+def get_device_mac(device):
+    """Get the first valid MAC address from device interfaces."""
+    for iface in device.interfaces.all():
+        if iface.mac_address and is_valid_mac(str(iface.mac_address)):
+            return str(iface.mac_address)
+    return None
+
+
+def get_device_lookup_method(device):
+    """
+    Determine the lookup method for a device based on configured mappings.
+
+    Returns:
+        tuple: (lookup_method, has_required_data)
+        - lookup_method: "hostname", "mac", or None if no mapping matches
+        - has_required_data: True if device has the data needed for lookup
+    """
+    config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+    mappings = config.get("device_mappings", [])
+
+    if not device.device_type:
+        return None, False
+
+    # Get device info for matching
+    manufacturer = device.device_type.manufacturer
+    manufacturer_slug = manufacturer.slug.lower() if manufacturer and manufacturer.slug else ""
+    manufacturer_name = manufacturer.name.lower() if manufacturer and manufacturer.name else ""
+    device_type_slug = device.device_type.slug.lower() if device.device_type.slug else ""
+    device_type_model = device.device_type.model.lower() if device.device_type.model else ""
+
+    # Check each mapping
+    for mapping in mappings:
+        manufacturer_pattern = mapping.get("manufacturer", "").lower()
+        device_type_pattern = mapping.get("device_type", "").lower()
+        lookup = mapping.get("lookup", "hostname")
+
+        # Check manufacturer match (against both slug and name)
+        manufacturer_match = False
+        if manufacturer_pattern:
+            try:
+                if (re.search(manufacturer_pattern, manufacturer_slug, re.IGNORECASE) or
+                    re.search(manufacturer_pattern, manufacturer_name, re.IGNORECASE)):
+                    manufacturer_match = True
+            except re.error:
+                # Invalid regex, try literal match
+                if manufacturer_pattern in manufacturer_slug or manufacturer_pattern in manufacturer_name:
+                    manufacturer_match = True
+
+        if not manufacturer_match:
+            continue
+
+        # Check device_type match if specified (against both slug and model)
+        if device_type_pattern:
+            device_type_match = False
+            try:
+                if (re.search(device_type_pattern, device_type_slug, re.IGNORECASE) or
+                    re.search(device_type_pattern, device_type_model, re.IGNORECASE)):
+                    device_type_match = True
+            except re.error:
+                if device_type_pattern in device_type_slug or device_type_pattern in device_type_model:
+                    device_type_match = True
+
+            if not device_type_match:
+                continue
+
+        # Mapping matches! Check if device has required data
+        if lookup == "mac":
+            mac = get_device_mac(device)
+            return "mac", mac is not None
+        else:  # hostname
+            return "hostname", bool(device.name)
+
+    return None, False
+
+
+def should_show_catalyst_tab(device):
+    """
+    Determine if the Catalyst Center tab should be visible for this device.
+
+    Shows tab if device matches any configured device_mapping and has
+    the required data for the lookup method.
+    """
+    lookup_method, has_data = get_device_lookup_method(device)
+    return lookup_method is not None and has_data
+
+
 @register_model_view(Device, name="catalyst_center", path="catalyst-center")
 class DeviceCatalystCenterView(generic.ObjectView):
     """Display Catalyst Center client details for a Device."""
@@ -31,13 +128,13 @@ class DeviceCatalystCenterView(generic.ObjectView):
         weight=9000,
         permission="dcim.view_device",
         hide_if_empty=False,
+        visible=should_show_catalyst_tab,
     )
 
     def get(self, request, pk):
         """Handle GET request for the Catalyst Center tab."""
         device = Device.objects.get(pk=pk)
 
-        # Get client from Catalyst Center using device name as MAC
         client = get_client()
         config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
 
@@ -47,22 +144,44 @@ class DeviceCatalystCenterView(generic.ObjectView):
         if not client:
             error = "Catalyst Center not configured. Please configure the plugin in NetBox settings."
         else:
-            # Use device name as MAC address (for Vocera badges, name = MAC)
-            mac_address = device.name
+            # Determine lookup method based on device_mappings config
+            lookup_method, has_data = get_device_lookup_method(device)
 
-            # Try to look up by device name (which might be a MAC address)
-            client_data = client.get_client_detail(mac_address)
-
-            if "error" in client_data:
-                error = client_data.get("error")
-                client_data = {}
+            if lookup_method == "hostname":
+                # Network device - look up by hostname
+                client_data = client.get_network_device(device.name)
+                if "error" in client_data:
+                    error = client_data.get("error")
+                    client_data = {}
+            elif lookup_method == "mac":
+                # Wireless client - look up by MAC address
+                mac_address = get_device_mac(device)
+                if mac_address:
+                    client_data = client.get_client_detail(mac_address)
+                    if "error" in client_data:
+                        error = client_data.get("error")
+                        client_data = {}
+                else:
+                    error = "No MAC address found on device interfaces."
+            else:
+                # No matching device_mapping found
+                error = (
+                    "This device doesn't match any configured device_mappings. "
+                    "Configure device_mappings in the plugin settings to enable lookups."
+                )
 
         # Get Catalyst Center URL for external links
         catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
 
+        # Choose template based on data type
+        if client_data.get("is_network_device"):
+            template = "netbox_catalyst_center/network_device_tab.html"
+        else:
+            template = self.template_name
+
         return render(
             request,
-            self.template_name,
+            template,
             {
                 "object": device,
                 "tab": self.tab,

@@ -20,24 +20,42 @@
                     </div>
                     <div class="card-body text-center">
                         {% if client_data.connected %}
-                        <span class="badge bg-success fs-4 mb-2">
-                            <i class="mdi mdi-check-circle"></i> Connected
-                        </span>
+                        <div class="p-3 mb-2 bg-success rounded">
+                            <span class="text-white fs-3 fw-bold">
+                                <i class="mdi mdi-check-circle"></i> Connected
+                            </span>
+                        </div>
                         {% else %}
-                        <span class="badge bg-secondary fs-4 mb-2">
-                            <i class="mdi mdi-close-circle"></i> {{ client_data.connection_status|default:"Offline" }}
-                        </span>
+                        <div class="p-3 mb-2 bg-secondary rounded">
+                            <span class="text-white fs-3 fw-bold">
+                                <i class="mdi mdi-close-circle"></i> {{ client_data.connection_status|default:"Offline" }}
+                            </span>
+                        </div>
                         {% endif %}
 
                         {% if client_data.overall_health is not None %}
                         <div class="mt-3">
-                            <strong>Health Score:</strong>
+                            <span class="fs-5 fw-bold">Health Score:</span>
                             {% if client_data.overall_health >= 8 %}
-                            <span class="badge bg-success">{{ client_data.overall_health }}/10</span>
+                            <div class="mt-2 p-2 bg-success rounded d-inline-block">
+                                <span class="text-white fs-4 fw-bold">{{ client_data.overall_health }}/10</span>
+                            </div>
+                            <div class="small text-muted mt-1">Good - Operating normally</div>
                             {% elif client_data.overall_health >= 5 %}
-                            <span class="badge bg-warning">{{ client_data.overall_health }}/10</span>
+                            <div class="mt-2 p-2 bg-warning rounded d-inline-block">
+                                <span class="text-dark fs-4 fw-bold">{{ client_data.overall_health }}/10</span>
+                            </div>
+                            <div class="small text-muted mt-1">Fair - Some issues detected</div>
+                            {% elif client_data.overall_health >= 1 %}
+                            <div class="mt-2 p-2 bg-danger rounded d-inline-block">
+                                <span class="text-white fs-4 fw-bold">{{ client_data.overall_health }}/10</span>
+                            </div>
+                            <div class="small text-muted mt-1">Poor - Connectivity issues</div>
                             {% else %}
-                            <span class="badge bg-danger">{{ client_data.overall_health }}/10</span>
+                            <div class="mt-2 p-2 bg-secondary rounded d-inline-block">
+                                <span class="text-white fs-4 fw-bold">{{ client_data.overall_health }}/10</span>
+                            </div>
+                            <div class="small text-muted mt-1">No health data - Client offline or no recent activity</div>
                             {% endif %}
                         </div>
                         {% endif %}

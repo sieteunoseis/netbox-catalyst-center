@@ -70,6 +70,41 @@
                     </tr>
                 </table>
 
+                <!-- Device Mappings -->
+                <h6 class="mt-4 mb-3"><i class="mdi mdi-map"></i> Device Mappings</h6>
+                {% if config.device_mappings %}
+                <table class="table table-sm table-hover">
+                    <thead>
+                        <tr>
+                            <th>Manufacturer</th>
+                            <th>Device Type</th>
+                            <th>Lookup Method</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for mapping in config.device_mappings %}
+                        <tr>
+                            <td><code>{{ mapping.manufacturer|default:"*" }}</code></td>
+                            <td><code>{{ mapping.device_type|default:"*" }}</code></td>
+                            <td>
+                                {% if mapping.lookup == "mac" %}
+                                <span class="badge bg-info text-dark">MAC Address</span>
+                                <small class="text-muted">(Wireless Client API)</small>
+                                {% else %}
+                                <span class="badge bg-primary">Hostname</span>
+                                <small class="text-muted">(Network Device API)</small>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="alert alert-warning">
+                    <i class="mdi mdi-alert"></i> No device mappings configured. The Catalyst Center tab will not appear on any devices.
+                </div>
+                {% endif %}
+
                 <!-- Test Connection Button -->
                 <div class="mt-3">
                     <button type="button" class="btn btn-primary" id="test-connection-btn">
@@ -99,6 +134,13 @@ PLUGINS_CONFIG = {
         'timeout': 30,
         'cache_timeout': 60,
         'verify_ssl': False,
+        # Device mappings control which devices show the tab
+        # manufacturer/device_type are regex patterns
+        # lookup: "hostname" = Network Device API, "mac" = Client API
+        'device_mappings': [
+            {'manufacturer': 'cisco', 'lookup': 'hostname'},
+            {'manufacturer': 'vocera', 'lookup': 'mac'},
+        ],
     }
 }</code></pre>
                 <a href="https://github.com/sieteunoseis/netbox-catalyst-center" target="_blank" class="btn btn-outline-secondary btn-sm">
@@ -118,16 +160,24 @@ PLUGINS_CONFIG = {
             <div class="card-body">
                 <p>
                     This plugin displays Cisco Catalyst Center (formerly DNA Center)
-                    client details on Device pages in NetBox.
+                    data on Device pages in NetBox.
                 </p>
                 <p>
-                    <strong>Features:</strong>
+                    <strong>Network Devices</strong> (hostname lookup):
                 </p>
                 <ul>
-                    <li>Real-time IP address lookup</li>
+                    <li>Reachability status</li>
+                    <li>Software version &amp; platform</li>
+                    <li>Serial number &amp; uptime</li>
+                    <li>SNMP location/contact</li>
+                </ul>
+                <p>
+                    <strong>Wireless Clients</strong> (MAC lookup):
+                </p>
+                <ul>
+                    <li>Connection status &amp; health score</li>
                     <li>Connected AP/switch info</li>
-                    <li>Health score display</li>
-                    <li>Signal quality metrics</li>
+                    <li>Signal quality (RSSI, SNR)</li>
                     <li>SSID and VLAN details</li>
                 </ul>
                 <p class="text-muted small mb-0">

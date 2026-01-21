@@ -38,7 +38,7 @@ class CatalystCenterClient:
             return self._token
 
         try:
-            auth_url = f"{self.base_url}/api/system/v1/auth/token"
+            auth_url = f"{self.base_url}/dna/system/api/v1/auth/token"
             response = requests.post(
                 auth_url,
                 auth=(self.username, self.password),
@@ -156,23 +156,153 @@ class CatalystCenterClient:
             "cached": False,
         }
 
-        # Extract overall health score
-        for score in client_info.get("health_score", []):
-            if score.get("healthType") == "OVERALL":
-                client_info["overall_health"] = score.get("score")
-                break
+        # Extract overall health score - handle multiple API response formats
+        health_score_data = detail.get("healthScore", [])
+
+        # Format 1: Array of {healthType, score} objects
+        if isinstance(health_score_data, list):
+            for score in health_score_data:
+                if isinstance(score, dict) and score.get("healthType") == "OVERALL":
+                    client_info["overall_health"] = score.get("score")
+                    break
+            # If no OVERALL found, try first score or onboardingHealth
+            if client_info["overall_health"] is None and health_score_data:
+                if isinstance(health_score_data[0], dict):
+                    client_info["overall_health"] = health_score_data[0].get("score")
+                elif isinstance(health_score_data[0], (int, float)):
+                    client_info["overall_health"] = health_score_data[0]
+
+        # Format 2: Direct number
+        elif isinstance(health_score_data, (int, float)):
+            client_info["overall_health"] = health_score_data
+
+        # Also check for 'onboardingHealth' and 'connectedHealth' as fallbacks
+        if client_info["overall_health"] is None:
+            onboarding = detail.get("onboardingHealth")
+            connected = detail.get("connectedHealth")
+            if isinstance(onboarding, (int, float)):
+                client_info["overall_health"] = onboarding
+            elif isinstance(connected, (int, float)):
+                client_info["overall_health"] = connected
 
         # Extract connected AP/switch info
         if client_info["connected_device"]:
             device = client_info["connected_device"][0] if isinstance(client_info["connected_device"], list) else client_info["connected_device"]
             client_info["connected_device_name"] = device.get("name")
-            client_info["connected_device_ip"] = device.get("managementIpAddress")
+            # Handle both API response formats: mgmtIp (wireless) and managementIpAddress (wired)
+            client_info["connected_device_ip"] = device.get("mgmtIp") or device.get("managementIpAddress")
             client_info["connected_interface"] = device.get("interfaceName")
 
         # Cache the result
         cache.set(cache_key, client_info, cache_timeout)
 
         return client_info
+
+    def get_network_device(self, hostname):
+        """
+        Get network device details by hostname.
+
+        For Cisco infrastructure devices (voice gateways, APs, switches, etc.)
+        that are in DNAC inventory.
+
+        Args:
+            hostname: Device hostname (with or without domain)
+
+        Returns:
+            dict with device details or error
+        """
+        # Check cache
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_device_{hostname}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        # Extract base hostname without domain
+        base_hostname = hostname.lower().replace(".ohsu.edu", "")
+        endpoint = "/dna/intent/api/v1/network-device"
+
+        # DNAC API is case-sensitive but supports regex character classes
+        # Build pattern like [Aa][Mm][Aa]agw01.* for case-insensitive matching
+        case_insensitive_pattern = "".join(
+            f"[{c.upper()}{c.lower()}]" if c.isalpha() else c
+            for c in base_hostname
+        )
+        wildcard_pattern = f"{case_insensitive_pattern}.*"
+        params = {"hostname": wildcard_pattern}
+        result = self._make_request(endpoint, params)
+
+        if "error" in result:
+            return result
+
+        response = result.get("response", [])
+
+        # Find matching device (case-insensitive comparison on our side)
+        device_data = None
+        if response:
+            # Look for exact hostname match (case-insensitive)
+            for device in response:
+                dnac_hostname = device.get("hostname", "").lower()
+                dnac_base = dnac_hostname.replace(".ohsu.edu", "")
+                if dnac_base == base_hostname:
+                    device_data = device
+                    break
+
+            # If no exact match, use first result that contains hostname
+            if not device_data:
+                for device in response:
+                    dnac_hostname = device.get("hostname", "").lower()
+                    if base_hostname in dnac_hostname:
+                        device_data = device
+                        break
+
+            # Last resort - first result
+            if not device_data and response:
+                device_data = response[0]
+
+        if not device_data:
+            return {"error": f"Device '{hostname}' not found in Catalyst Center inventory"}
+
+        # Extract relevant fields for network devices
+        device_info = {
+            "is_network_device": True,
+            "hostname": device_data.get("hostname"),
+            "management_ip": device_data.get("managementIpAddress"),
+            "device_type": device_data.get("type"),
+            "device_family": device_data.get("family"),
+            "platform": device_data.get("platformId"),
+            "software_version": device_data.get("softwareVersion"),
+            "software_type": device_data.get("softwareType"),
+            "serial_number": device_data.get("serialNumber"),
+            "mac_address": device_data.get("macAddress"),
+            "uptime": device_data.get("upTime"),
+            "uptime_seconds": device_data.get("uptimeSeconds"),
+            "reachability_status": device_data.get("reachabilityStatus"),
+            "reachability_failure_reason": device_data.get("reachabilityFailureReason"),
+            "collection_status": device_data.get("collectionStatus"),
+            "snmp_contact": device_data.get("snmpContact"),
+            "snmp_location": device_data.get("snmpLocation"),
+            "vendor": device_data.get("vendor"),
+            "series": device_data.get("series"),
+            "role": device_data.get("role"),
+            "boot_time": device_data.get("bootDateTime"),
+            "last_updated": device_data.get("lastUpdated"),
+            "device_id": device_data.get("id"),
+            "cached": False,
+        }
+
+        # Determine connection status based on reachability
+        reachability = device_data.get("reachabilityStatus", "").upper()
+        device_info["connected"] = reachability in ("REACHABLE", "PING_REACHABLE")
+        device_info["connection_status"] = reachability
+
+        # Cache the result
+        cache.set(cache_key, device_info, cache_timeout)
+
+        return device_info
 
     def test_connection(self):
         """Test connection to Catalyst Center."""
