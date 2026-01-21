@@ -9,30 +9,6 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 black isort
-
-      - name: Check formatting with black
-        run: black --check netbox_catalyst_center/
-
-      - name: Check import sorting with isort
-        run: isort --check-only netbox_catalyst_center/
-
-      - name: Lint with flake8
-        run: flake8 netbox_catalyst_center/ --max-line-length=120 --ignore=E501,W503,E203
-
-  test:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12']
@@ -48,8 +24,34 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install flake8 black isort
 
-      - name: Run tests
+      - name: Check formatting with black
+        run: black --check netbox_catalyst_center/
+
+      - name: Check import sorting with isort
+        run: isort --check-only netbox_catalyst_center/
+
+      - name: Lint with flake8
+        run: flake8 netbox_catalyst_center/ --max-line-length=120 --ignore=E501,W503,E203
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
         run: |
-          python -c "import netbox_catalyst_center; print(f'Plugin version: {netbox_catalyst_center.__version__}')"
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
