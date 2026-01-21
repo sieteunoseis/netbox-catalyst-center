@@ -274,26 +274,35 @@ class CatalystCenterClient:
 
         # Find matching device (case-insensitive comparison on our side)
         device_data = None
-        if response:
-            # Look for exact hostname match (case-insensitive)
-            for device in response:
-                dnac_hostname = device.get("hostname", "").lower()
-                dnac_base = dnac_hostname.replace(".ohsu.edu", "")
-                if dnac_base == base_hostname:
-                    device_data = device
-                    break
+        found_by_ip = False
 
-            # If no exact match, use first result that contains hostname
-            if not device_data:
+        if response:
+            # If we searched by IP and got exactly one result, trust it
+            if management_ip and len(response) == 1:
+                device_data = response[0]
+                found_by_ip = True
+                logger.debug(f"Using single IP match result: {device_data.get('hostname')}")
+            else:
+                # Look for exact hostname match (case-insensitive)
                 for device in response:
                     dnac_hostname = device.get("hostname", "").lower()
-                    if base_hostname in dnac_hostname:
+                    dnac_base = dnac_hostname.replace(".ohsu.edu", "")
+                    if dnac_base == base_hostname:
                         device_data = device
+                        logger.debug(f"Exact hostname match: {device.get('hostname')}")
                         break
 
-            # Last resort - first result (for IP lookups)
-            if not device_data and response:
-                device_data = response[0]
+                # If no exact match, look for hostname that starts with our search term
+                # This prevents "admagw01" from incorrectly matching "admcap1n01"
+                if not device_data:
+                    for device in response:
+                        dnac_hostname = device.get("hostname", "").lower()
+                        dnac_base = dnac_hostname.replace(".ohsu.edu", "")
+                        # Match if DNAC hostname starts with our hostname or vice versa
+                        if dnac_base.startswith(base_hostname) or base_hostname.startswith(dnac_base):
+                            device_data = device
+                            logger.debug(f"Prefix hostname match: {device.get('hostname')}")
+                            break
 
         if not device_data:
             return {"error": f"Device '{hostname}' not found in Catalyst Center inventory"}
