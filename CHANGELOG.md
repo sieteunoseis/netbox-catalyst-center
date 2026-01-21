@@ -7,22 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.3] - 2025-01-21
+## [1.0.1] - 2025-01-21
 
 ### Fixed
-- Fixed PyPI Trusted Publisher configuration
+- Fixed version alignment between pyproject.toml and git tags
+- Updated changelog with proper version history
 
-## [0.1.2] - 2025-01-21
-
-### Fixed
-- Fixed GitHub environment protection rules for PyPI publishing
-
-## [0.1.1] - 2025-01-21
-
-### Fixed
-- Combined release and PyPI publish into single workflow
-
-## [0.1.0] - 2025-01-21
+## [1.0.0] - 2025-01-21
 
 ### Added
 
@@ -57,8 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10+ required
 - Apache 2.0 license
 
-[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v0.1.3...HEAD
-[0.1.3]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/sieteunoseis/netbox-catalyst-center/releases/tag/v0.1.0
+[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/sieteunoseis/netbox-catalyst-center/releases/tag/v1.0.0
