@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-01-21
+
+### Added
+
+- **Device Import Feature**
+  - Search Catalyst Center inventory by hostname, IP address, or MAC address
+  - Wildcard support for searches (e.g., `switch*`, `192.168.*`)
+  - Import devices from Catalyst Center into NetBox (one-way import)
+  - Auto-detect device role from Catalyst Center device family
+  - Duplicate detection shows devices already in NetBox
+  - Maximum 25 devices per import batch
+
+- **Import Page UI**
+  - Dedicated import page under Catalyst Center menu
+  - Search results with platform, serial number, and role information
+  - Select/deselect devices for import
+  - Choose default site and optionally override device role
+
+### Changed
+
+- Improved device role mapping using Catalyst Center device family (Wireless Controller, Switches and Hubs, Routers, etc.)
+- Platform deduplication for devices with repeated platform IDs
+- Updated navigation menu with Import Devices link
+
+### Fixed
+
+- Fixed incorrect device matching when hostname contains similar prefix to another device
+- Fixed search returning no results for exact hostname/IP matches (DNAC API pagination)
+
 ## [1.0.1] - 2025-01-21
 
 ### Fixed
@@ -48,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10+ required
 - Apache 2.0 license
 
-[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/sieteunoseis/netbox-catalyst-center/releases/tag/v1.0.0

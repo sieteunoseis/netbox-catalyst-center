@@ -7,7 +7,7 @@ Shows real-time IP address, connected AP, health score, and connection status.
 
 from netbox.plugins import PluginConfig
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 class CatalystCenterConfig(PluginConfig):

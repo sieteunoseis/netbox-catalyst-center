@@ -457,6 +457,28 @@ class SyncDeviceFromDNACView(View):
         return {"changes": changes, "changed": changed}
 
 
+class ImportPageView(View):
+    """Dedicated page for searching and importing devices from Catalyst Center."""
+
+    template_name = "netbox_catalyst_center/import.html"
+
+    def get(self, request):
+        """Display the import page."""
+        from dcim.models import DeviceRole, Site
+
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "config": config,
+                "sites": Site.objects.all().order_by("name"),
+                "roles": DeviceRole.objects.all().order_by("name"),
+            },
+        )
+
+
 class SearchDevicesView(View):
     """Search for devices in Catalyst Center inventory."""
 
@@ -540,6 +562,14 @@ class ImportDevicesView(View):
         if not devices_to_import:
             return JsonResponse({"error": "No devices to import"}, status=400)
 
+        # Enforce maximum import limit
+        MAX_IMPORT_LIMIT = 25
+        if len(devices_to_import) > MAX_IMPORT_LIMIT:
+            return JsonResponse(
+                {"error": f"Maximum {MAX_IMPORT_LIMIT} devices can be imported at a time"},
+                status=400,
+            )
+
         if not default_site_id:
             return JsonResponse({"error": "Default site is required"}, status=400)
 
@@ -574,6 +604,18 @@ class ImportDevicesView(View):
             serial = dnac_device.get("serial_number", "")
             platform = dnac_device.get("platform", "")
             management_ip = dnac_device.get("management_ip", "")
+
+            # Deduplicate platform if it contains duplicates (e.g., "C9800-40-K9, C9800-40-K9")
+            if platform and "," in platform:
+                platform_parts = [p.strip() for p in platform.split(",")]
+                # Remove duplicates while preserving order
+                seen = set()
+                unique_parts = []
+                for p in platform_parts:
+                    if p and p not in seen:
+                        seen.add(p)
+                        unique_parts.append(p)
+                platform = ", ".join(unique_parts) if len(unique_parts) > 1 else unique_parts[0] if unique_parts else ""
 
             if not hostname:
                 results["errors"].append({"device": dnac_device, "error": "No hostname"})
@@ -614,10 +656,23 @@ class ImportDevicesView(View):
                     defaults={"slug": "cisco-unknown"},
                 )
 
-            # Determine device role from DNAC role if no default specified
+            # Determine device role from DNAC data if no default specified
+            # Priority: device_family > role
             role = default_role
             if not role:
+                device_family = dnac_device.get("device_family", "").lower()
                 dnac_role = dnac_device.get("role", "").upper()
+
+                # Family-based role mapping (most accurate)
+                family_mapping = {
+                    "wireless controller": "wireless-controller",
+                    "switches and hubs": "access-switch",
+                    "routers": "router",
+                    "unified ap": "access-point",
+                    "voice and telephony": "voice-gateway",
+                }
+
+                # Role-based mapping (fallback)
                 role_mapping = {
                     "ACCESS": "access-switch",
                     "DISTRIBUTION": "distribution-switch",
@@ -625,7 +680,17 @@ class ImportDevicesView(View):
                     "BORDER ROUTER": "router",
                     "UNKNOWN": "network-device",
                 }
-                role_slug = role_mapping.get(dnac_role, "network-device")
+
+                # Try family first, then role
+                role_slug = None
+                for family_key, slug in family_mapping.items():
+                    if family_key in device_family:
+                        role_slug = slug
+                        break
+
+                if not role_slug:
+                    role_slug = role_mapping.get(dnac_role, "network-device")
+
                 role, _ = DeviceRole.objects.get_or_create(
                     slug=role_slug,
                     defaults={"name": role_slug.replace("-", " ").title()},

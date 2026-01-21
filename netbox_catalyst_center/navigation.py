@@ -8,6 +8,16 @@ menu = PluginMenu(
     label="Catalyst Center",
     groups=(
         (
+            "Devices",
+            (
+                PluginMenuItem(
+                    link="plugins:netbox_catalyst_center:import_page",
+                    link_text="Import Devices",
+                    permissions=["dcim.add_device"],
+                ),
+            ),
+        ),
+        (
             "Settings",
             (
                 PluginMenuItem(

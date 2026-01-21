@@ -25,6 +25,12 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 - **AP Information**: Shows connected access point, SSID, and location
 - **Signal Quality**: Displays RSSI, SNR, and data rate for wireless clients
 
+### Device Import
+- **Search Catalyst Center**: Search by hostname, IP address, or MAC address with wildcard support
+- **One-Way Import**: Import devices from Catalyst Center into NetBox (one-way only)
+- **Auto-detect Device Role**: Automatically maps Catalyst Center device family to NetBox roles
+- **Duplicate Detection**: Shows which devices already exist in NetBox
+
 ### General Features
 - **Configurable Device Mappings**: Control which devices show the tab and lookup method
 - **Multi-strategy Lookup**: IP address → hostname → fetch all with local filtering
@@ -37,6 +43,9 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 
 ### Device Tab - Wireless Client View
 ![Wireless Client Tab](screenshots/netbox-catalyst-center-client.png)
+
+### Import Devices from Catalyst Center
+![Import Devices](docs/netbox-catalyst-center-import.png)
 
 ### Settings Page
 ![Settings](screenshots/netbox-catalyst-center-settings.png)

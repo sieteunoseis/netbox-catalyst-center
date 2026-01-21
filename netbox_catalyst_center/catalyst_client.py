@@ -502,34 +502,103 @@ class CatalystCenterClient:
         Returns:
             dict with "devices" array or "error"
         """
-        endpoint = "/dna/intent/api/v1/network-device"
+        import re
 
+        endpoint = "/dna/intent/api/v1/network-device"
+        has_wildcard = "*" in search_value
+
+        # If no wildcard and searching by hostname or IP, use DNAC API directly
+        # This is much faster and handles all 5000+ devices
+        if not has_wildcard and search_type in ("hostname", "ip"):
+            if search_type == "hostname":
+                # Try exact hostname match first
+                result = self._make_request(f"{endpoint}?hostname={search_value}")
+            else:  # ip
+                result = self._make_request(f"{endpoint}?managementIpAddress={search_value}")
+
+            if "error" in result:
+                return result
+
+            devices = result.get("response", [])
+            matched_devices = []
+            for device in devices:
+                matched_devices.append(
+                    {
+                        "hostname": device.get("hostname"),
+                        "management_ip": device.get("managementIpAddress"),
+                        "serial_number": device.get("serialNumber"),
+                        "mac_address": device.get("macAddress"),
+                        "platform": device.get("platformId"),
+                        "software_version": device.get("softwareVersion"),
+                        "device_family": device.get("family"),
+                        "series": device.get("series"),
+                        "role": device.get("role"),
+                        "reachability_status": device.get("reachabilityStatus"),
+                        "snmp_location": device.get("snmpLocation"),
+                        "device_id": device.get("id"),
+                    }
+                )
+
+            return {
+                "devices": matched_devices,
+                "total_matched": len(matched_devices),
+                "total_in_dnac": len(matched_devices),  # We don't know total without fetching all
+            }
+
+        # For wildcard searches or MAC, we need to fetch and filter locally
         # Convert user-friendly wildcard (*) to regex pattern for local filtering
-        # DNAC API doesn't support wildcards well, so we fetch and filter locally
-        search_pattern = search_value.lower().replace("*", ".*")
+        # First escape all regex special characters, then convert * wildcards to .*
+        search_escaped = re.escape(search_value.lower())
+        # Now convert escaped wildcards (\*) back to regex wildcards (.*)
+        search_pattern = search_escaped.replace(r"\*", ".*")
+
+        # Add anchors if no wildcards at start/end
         if not search_pattern.startswith(".*"):
             search_pattern = f"^{search_pattern}"
         if not search_pattern.endswith(".*"):
             search_pattern = f"{search_pattern}$"
 
         try:
-            import re
-
             pattern = re.compile(search_pattern, re.IGNORECASE)
         except re.error:
             return {"error": f"Invalid search pattern: {search_value}"}
 
-        # Fetch all devices (use cached list if available)
+        # Fetch all devices with pagination (DNAC default limit is 500)
         all_devices_cache_key = "catalyst_all_devices_search"
         all_devices = cache.get(all_devices_cache_key)
 
         if not all_devices:
-            result = self._make_request(endpoint)
-            if "error" in result:
-                return result
-            all_devices = result.get("response", [])
+            all_devices = []
+            offset = 1  # DNAC uses 1-based offset
+            page_size = 500
+
+            while True:
+                result = self._make_request(f"{endpoint}?limit={page_size}&offset={offset}")
+                if "error" in result:
+                    if all_devices:  # Return what we have if we got some
+                        break
+                    return result
+
+                page_devices = result.get("response", [])
+                if not page_devices:
+                    break
+
+                all_devices.extend(page_devices)
+                logger.debug(f"Fetched {len(page_devices)} devices, total so far: {len(all_devices)}")
+
+                if len(page_devices) < page_size:
+                    break  # Last page
+
+                offset += page_size
+
+                # Safety limit to avoid infinite loops
+                if len(all_devices) > 10000:
+                    logger.warning("Hit safety limit of 10000 devices")
+                    break
+
             # Cache for 2 minutes
             cache.set(all_devices_cache_key, all_devices, 120)
+            logger.info(f"Cached {len(all_devices)} devices from Catalyst Center")
 
         # Filter devices based on search type
         matched_devices = []
@@ -550,12 +619,18 @@ class CatalystCenterClient:
 
             elif search_type == "mac":
                 mac = device.get("macAddress", "") or ""
-                # Normalize MAC format for comparison
-                mac_normalized = mac.lower().replace(":", "").replace("-", "")
-                search_normalized = search_value.lower().replace(":", "").replace("-", "").replace("*", ".*")
+                # Normalize MAC format for comparison (remove separators)
+                mac_normalized = mac.lower().replace(":", "").replace("-", "").replace(".", "")
+                search_normalized = search_value.lower().replace(":", "").replace("-", "").replace(".", "")
+                # Escape regex special chars, then convert wildcards
+                search_escaped = re.escape(search_normalized).replace(r"\*", ".*")
+                if not search_escaped.startswith(".*"):
+                    search_escaped = f"^{search_escaped}"
+                if not search_escaped.endswith(".*"):
+                    search_escaped = f"{search_escaped}$"
                 try:
-                    mac_pattern = re.compile(f"^{search_normalized}$", re.IGNORECASE)
-                    if mac_pattern.search(mac_normalized) or mac_pattern.search(mac):
+                    mac_pattern = re.compile(search_escaped, re.IGNORECASE)
+                    if mac_pattern.search(mac_normalized):
                         match = True
                 except re.error:
                     pass
