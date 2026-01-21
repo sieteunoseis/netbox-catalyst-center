@@ -4,9 +4,9 @@ Cisco Catalyst Center API Client
 Handles authentication and API calls to Catalyst Center (formerly DNA Center).
 """
 
-import requests
 import logging
-from functools import lru_cache
+
+import requests
 from django.conf import settings
 from django.core.cache import cache
 
@@ -102,7 +102,7 @@ class CatalystCenterClient:
         # Normalize MAC address format (Catalyst Center wants XX:XX:XX:XX:XX:XX)
         mac = mac_address.replace(":", "").replace("-", "").lower()
         if len(mac) == 12:
-            mac_formatted = ":".join(mac[i:i+2] for i in range(0, 12, 2))
+            mac_formatted = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
         else:
             mac_formatted = mac_address
 
@@ -187,7 +187,11 @@ class CatalystCenterClient:
 
         # Extract connected AP/switch info
         if client_info["connected_device"]:
-            device = client_info["connected_device"][0] if isinstance(client_info["connected_device"], list) else client_info["connected_device"]
+            device = (
+                client_info["connected_device"][0]
+                if isinstance(client_info["connected_device"], list)
+                else client_info["connected_device"]
+            )
             client_info["connected_device_name"] = device.get("name")
             # Handle both API response formats: mgmtIp (wireless) and managementIpAddress (wired)
             client_info["connected_device_ip"] = device.get("mgmtIp") or device.get("managementIpAddress")
@@ -355,7 +359,7 @@ class CatalystCenterClient:
             cached["cached"] = True
             return cached
 
-        endpoint = f"/dna/intent/api/v1/compliance/detail"
+        endpoint = "/dna/intent/api/v1/compliance/detail"
         params = {"deviceUuid": device_id}
         result = self._make_request(endpoint, params)
 
@@ -379,13 +383,15 @@ class CatalystCenterClient:
             last_sync = record.get("lastSyncTime")
             remediation = record.get("remediationSupported", False)
 
-            compliance_info["compliance_records"].append({
-                "type": comp_type,
-                "status": status,
-                "state": state,
-                "last_sync": last_sync,
-                "remediation_supported": remediation,
-            })
+            compliance_info["compliance_records"].append(
+                {
+                    "type": comp_type,
+                    "status": status,
+                    "state": state,
+                    "last_sync": last_sync,
+                    "remediation_supported": remediation,
+                }
+            )
 
             # Update overall status if any non-compliant found
             if status == "NON_COMPLIANT":

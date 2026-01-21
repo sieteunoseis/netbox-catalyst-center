@@ -36,6 +36,7 @@ Issues = "https://github.com/sieteunoseis/netbox-catalyst-center/issues"
 dev = [
     "black",
     "flake8",
+    "isort",
     "pytest",
 ]
 
@@ -45,3 +46,7 @@ include = ["netbox_catalyst_center*"]
 [tool.black]
 line-length = 120
 target-version = ['py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 120

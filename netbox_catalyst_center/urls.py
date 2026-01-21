@@ -4,7 +4,7 @@ URL patterns for NetBox Catalyst Center Plugin
 
 from django.urls import path
 
-from .views import CatalystCenterSettingsView, TestConnectionView, SyncDeviceFromDNACView
+from .views import CatalystCenterSettingsView, SyncDeviceFromDNACView, TestConnectionView
 
 urlpatterns = [
     path("settings/", CatalystCenterSettingsView.as_view(), name="settings"),

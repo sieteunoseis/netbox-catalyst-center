@@ -1,5 +1,7 @@
 # NetBox Catalyst Center Plugin
 
+<img src="docs/icon.png" alt="NetBox Catalyst Center Plugin" width="100" align="right">
+
 A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with NetBox, displaying network device details, wireless client information, compliance status, and security advisories.
 
 ![NetBox Version](https://img.shields.io/badge/NetBox-4.0+-blue)
@@ -38,9 +40,11 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 
 ## Requirements
 
-- NetBox 4.0 or higher
+- NetBox 4.0 or higher (tested on NetBox 4.x only)
 - Cisco Catalyst Center (DNA Center) 2.x or higher
 - Python 3.10+
+
+> **Note:** This plugin is developed and tested exclusively on NetBox 4.x. It is not compatible with NetBox 3.x due to API and model changes.
 
 ## Installation
 
@@ -195,6 +199,14 @@ pip install -e ".[dev]"
 black netbox_catalyst_center/
 flake8 netbox_catalyst_center/
 ```
+
+## Documentation
+
+Full documentation is available in the [GitHub Wiki](https://github.com/sieteunoseis/netbox-catalyst-center/wiki).
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history and breaking changes.
 
 ## License
 

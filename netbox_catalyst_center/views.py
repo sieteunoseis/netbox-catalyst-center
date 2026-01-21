@@ -7,19 +7,18 @@ Provides settings configuration UI.
 
 import re
 
+from dcim.models import Device
 from django.conf import settings
 from django.contrib import messages
 from django.http import JsonResponse
-from django.shortcuts import render, redirect
+from django.shortcuts import render
 from django.views import View
-
-from dcim.models import Device
 from ipam.models import IPAddress
 from netbox.views import generic
 from utilities.views import ViewTab, register_model_view
 
-from .forms import CatalystCenterSettingsForm
 from .catalyst_client import get_client
+from .forms import CatalystCenterSettingsForm
 
 
 def is_valid_mac(value):
@@ -27,8 +26,8 @@ def is_valid_mac(value):
     if not value:
         return False
     # Remove common separators and check if it's 12 hex characters
-    cleaned = re.sub(r'[:\-\.]', '', value.lower())
-    return bool(re.match(r'^[0-9a-f]{12}$', cleaned))
+    cleaned = re.sub(r"[:\-\.]", "", value.lower())
+    return bool(re.match(r"^[0-9a-f]{12}$", cleaned))
 
 
 def get_device_mac(device):
@@ -71,8 +70,9 @@ def get_device_lookup_method(device):
         manufacturer_match = False
         if manufacturer_pattern:
             try:
-                if (re.search(manufacturer_pattern, manufacturer_slug, re.IGNORECASE) or
-                    re.search(manufacturer_pattern, manufacturer_name, re.IGNORECASE)):
+                if re.search(manufacturer_pattern, manufacturer_slug, re.IGNORECASE) or re.search(
+                    manufacturer_pattern, manufacturer_name, re.IGNORECASE
+                ):
                     manufacturer_match = True
             except re.error:
                 # Invalid regex, try literal match
@@ -86,8 +86,9 @@ def get_device_lookup_method(device):
         if device_type_pattern:
             device_type_match = False
             try:
-                if (re.search(device_type_pattern, device_type_slug, re.IGNORECASE) or
-                    re.search(device_type_pattern, device_type_model, re.IGNORECASE)):
+                if re.search(device_type_pattern, device_type_slug, re.IGNORECASE) or re.search(
+                    device_type_pattern, device_type_model, re.IGNORECASE
+                ):
                     device_type_match = True
             except re.error:
                 if device_type_pattern in device_type_slug or device_type_pattern in device_type_model:
@@ -389,7 +390,7 @@ class SyncDeviceFromDNACView(View):
                         device.comments = f"{device.comments}\n\n{location_prefix}{dnac_location}"
                     else:
                         device.comments = f"{location_prefix}{dnac_location}"
-                    changes.append(f"Added SNMP location to comments")
+                    changes.append("Added SNMP location to comments")
                     device_changed = True
 
         # Save device if any changes were made
@@ -397,17 +398,13 @@ class SyncDeviceFromDNACView(View):
             device.save()
 
         if not changes:
-            return JsonResponse({
-                "success": True,
-                "message": "No changes needed - device is already in sync",
-                "changes": []
-            })
+            return JsonResponse(
+                {"success": True, "message": "No changes needed - device is already in sync", "changes": []}
+            )
 
-        return JsonResponse({
-            "success": True,
-            "message": f"Synced {len(changes)} field(s) from Catalyst Center",
-            "changes": changes
-        })
+        return JsonResponse(
+            {"success": True, "message": f"Synced {len(changes)} field(s) from Catalyst Center", "changes": changes}
+        )
 
     def _sync_ip_address(self, device, dnac_ip):
         """Sync IP address from DNAC to device. Returns dict with changes and error."""

@@ -29,7 +29,7 @@ jobs:
         run: isort --check-only netbox_catalyst_center/
 
       - name: Lint with flake8
-        run: flake8 netbox_catalyst_center/ --max-line-length=120 --ignore=E501,W503
+        run: flake8 netbox_catalyst_center/ --max-line-length=120 --ignore=E501,W503,E203
 
   test:
     runs-on: ubuntu-latest

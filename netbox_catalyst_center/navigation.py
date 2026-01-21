@@ -4,7 +4,6 @@ Navigation menu items for NetBox Catalyst Center Plugin
 
 from netbox.plugins import PluginMenu, PluginMenuItem
 
-
 menu = PluginMenu(
     label="Catalyst Center",
     groups=(
