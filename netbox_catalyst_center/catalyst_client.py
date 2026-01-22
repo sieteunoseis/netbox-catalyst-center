@@ -274,13 +274,11 @@ class CatalystCenterClient:
 
         # Find matching device (case-insensitive comparison on our side)
         device_data = None
-        found_by_ip = False
 
         if response:
             # If we searched by IP and got exactly one result, trust it
             if management_ip and len(response) == 1:
                 device_data = response[0]
-                found_by_ip = True
                 logger.debug(f"Using single IP match result: {device_data.get('hostname')}")
             else:
                 # Look for exact hostname match (case-insensitive)
