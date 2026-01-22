@@ -8,6 +8,7 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 ![Python Version](https://img.shields.io/badge/Python-3.10+-green)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/sieteunoseis/netbox-catalyst-center/actions/workflows/ci.yml/badge.svg)](https://github.com/sieteunoseis/netbox-catalyst-center/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/netbox-catalyst-center)](https://pypi.org/project/netbox-catalyst-center/)
 
 ## Features
 
