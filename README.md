@@ -1,6 +1,6 @@
 # NetBox Catalyst Center Plugin
 
-<img src="docs/icon.png" alt="NetBox Catalyst Center Plugin" width="100" align="right">
+<img src="https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/docs/icon.png" alt="NetBox Catalyst Center Plugin" width="100" align="right">
 
 A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with NetBox, displaying network device details, wireless client information, compliance status, and security advisories.
 
