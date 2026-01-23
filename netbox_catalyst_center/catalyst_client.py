@@ -89,6 +89,25 @@ class CatalystCenterClient:
             logger.error(f"Request error to Catalyst Center: {e}")
             return {"error": str(e)}
 
+    def _dedupe_platform(self, platform_id):
+        """
+        Deduplicate platform ID for stacked switches.
+
+        Stacked switches report the same platform for each member (e.g., "C9300-48P, C9300-48P").
+        This returns unique values only (e.g., "C9300-48P").
+        """
+        if not platform_id or "," not in platform_id:
+            return platform_id
+
+        parts = [p.strip() for p in platform_id.split(",")]
+        seen = set()
+        unique = []
+        for p in parts:
+            if p and p not in seen:
+                seen.add(p)
+                unique.append(p)
+        return ", ".join(unique) if len(unique) > 1 else (unique[0] if unique else "")
+
     def get_client_detail(self, mac_address):
         """
         Get client details by MAC address.
@@ -329,16 +348,48 @@ class CatalystCenterClient:
             return {"error": error_msg}
 
         # Extract relevant fields for network devices
+        # Detect stack by checking for comma-separated platform/serial or lineCardCount
+        platform_raw = device_data.get("platformId") or ""
+        serial_raw = device_data.get("serialNumber") or ""
+        line_card_count = device_data.get("lineCardCount")
+
+        # Determine if this is a stack/virtual chassis
+        is_stack = False
+        stack_count = 1
+        if line_card_count:
+            try:
+                lc_count = int(line_card_count)
+                if lc_count > 1:
+                    is_stack = True
+                    stack_count = lc_count
+            except (ValueError, TypeError):
+                pass
+
+        # Also check for comma-separated values (fallback detection)
+        if not is_stack and ("," in platform_raw or "," in serial_raw):
+            is_stack = True
+            # Count stack members from serial numbers (most reliable)
+            if "," in serial_raw:
+                stack_count = len([s.strip() for s in serial_raw.split(",") if s.strip()])
+            elif "," in platform_raw:
+                stack_count = len([p.strip() for p in platform_raw.split(",") if p.strip()])
+
+        # Build platform and serial lists for display
+        platform_list = [p.strip() for p in platform_raw.split(",") if p.strip()] if platform_raw else []
+        serial_list = [s.strip() for s in serial_raw.split(",") if s.strip()] if serial_raw else []
+
         device_info = {
             "is_network_device": True,
             "hostname": device_data.get("hostname"),
             "management_ip": device_data.get("managementIpAddress"),
             "device_type": device_data.get("type"),
             "device_family": device_data.get("family"),
-            "platform": device_data.get("platformId"),
+            "platform": self._dedupe_platform(platform_raw),
+            "platform_list": platform_list,
             "software_version": device_data.get("softwareVersion"),
             "software_type": device_data.get("softwareType"),
-            "serial_number": device_data.get("serialNumber"),
+            "serial_number": serial_raw,
+            "serial_list": serial_list,
             "mac_address": device_data.get("macAddress"),
             "uptime": device_data.get("upTime"),
             "uptime_seconds": device_data.get("uptimeSeconds"),
@@ -353,6 +404,11 @@ class CatalystCenterClient:
             "boot_time": device_data.get("bootDateTime"),
             "last_updated": device_data.get("lastUpdated"),
             "device_id": device_data.get("id"),
+            # Stack/Virtual Chassis info
+            "is_stack": is_stack,
+            "stack_count": stack_count,
+            "line_card_count": line_card_count,
+            "line_card_id": device_data.get("lineCardId"),
             "cached": False,
         }
 
@@ -488,6 +544,149 @@ class CatalystCenterClient:
 
         return advisory_info
 
+    def get_device_interfaces(self, device_id):
+        """
+        Get all interfaces for a device from Catalyst Center.
+
+        Args:
+            device_id: The Catalyst Center device UUID
+
+        Returns:
+            dict with "interfaces" array or "error"
+        """
+        if not device_id:
+            return {"error": "No device ID provided"}
+
+        # Check cache
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_interfaces_{device_id}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        endpoint = f"/dna/intent/api/v1/interface/network-device/{device_id}"
+        result = self._make_request(endpoint)
+
+        if "error" in result:
+            return result
+
+        interfaces_list = result.get("response", [])
+
+        # Parse and normalize interface data
+        interfaces = []
+        for iface in interfaces_list:
+            interface_data = {
+                "id": iface.get("id"),
+                "name": iface.get("portName"),
+                "description": iface.get("description"),
+                "mac_address": iface.get("macAddress"),
+                "ip_address": iface.get("ipv4Address"),
+                "ip_mask": iface.get("ipv4Mask"),
+                "status": iface.get("status"),
+                "admin_status": iface.get("adminStatus"),
+                "speed": iface.get("speed"),  # In bps string like "1000000000"
+                "duplex": iface.get("duplex"),
+                "mtu": iface.get("mtu"),
+                "port_type": iface.get("portType"),  # e.g., "Ethernet Port"
+                "interface_type": iface.get("interfaceType"),  # e.g., "Physical"
+                "port_mode": iface.get("portMode"),  # e.g., "access", "trunk", "routed"
+                "native_vlan_id": iface.get("nativeVlanId"),
+                "voice_vlan": iface.get("voiceVlan"),
+                "vlan_id": iface.get("vlanId"),
+                "media_type": iface.get("mediaType"),  # e.g., "10/100/1000BaseTX"
+                "class_name": iface.get("className"),  # e.g., "EthernetInterface"
+                "is_l3_interface": iface.get("isL3Interface"),
+                "device_id": iface.get("deviceId"),
+                "mapped_physical_interface_id": iface.get("mappedPhysicalInterfaceId"),
+                "mapped_physical_interface_name": iface.get("mappedPhysicalInterfaceName"),
+                # POE fields (may not be present for non-POE ports)
+                "poe_enabled": iface.get("poeEnabled"),
+                "poe_status": iface.get("poeStatus"),
+                "poe_max_power": iface.get("maxAllocatedPower"),
+                "poe_allocated_power": iface.get("allocatedPower"),
+                "poe_power_drawn": iface.get("powerDrawn"),
+            }
+            interfaces.append(interface_data)
+
+        interface_info = {
+            "device_id": device_id,
+            "interfaces": interfaces,
+            "interface_count": len(interfaces),
+            "cached": False,
+        }
+
+        # Cache the result
+        cache.set(cache_key, interface_info, cache_timeout)
+
+        return interface_info
+
+    def get_device_poe_detail(self, device_id):
+        """
+        Get POE details for all interfaces on a device.
+
+        This is a separate API call from get_device_interfaces because POE data
+        is not included in the standard interface endpoint.
+
+        Args:
+            device_id: The Catalyst Center device UUID
+
+        Returns:
+            dict with "poe_interfaces" array or "error"
+        """
+        if not device_id:
+            return {"error": "No device ID provided"}
+
+        # Check cache (shorter timeout for POE data since it changes more frequently)
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = min(config.get("cache_timeout", 60), 30)  # Max 30 seconds for POE
+        cache_key = f"catalyst_poe_{device_id}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        endpoint = f"/dna/intent/api/v1/network-device/{device_id}/interface/poe-detail"
+        result = self._make_request(endpoint)
+
+        if "error" in result:
+            return result
+
+        poe_list = result.get("response", [])
+
+        # Parse and normalize POE data
+        poe_interfaces = []
+        for poe in poe_list:
+            poe_data = {
+                "interface_name": poe.get("interfaceName"),
+                "poe_oper_status": poe.get("poeOperStatus"),  # e.g., "on", "off", "fault"
+                "allocated_power": poe.get("allocatedPower"),  # Watts allocated
+                "max_port_power": poe.get("maxPortPower"),  # Max port power in Watts
+                "port_power_drawn": poe.get("portPowerDrawn"),  # Actual power drawn in Watts
+                "ieee_class": poe.get("ieeeClass"),  # e.g., "class0", "class4"
+                "pd_device_type": poe.get("pdDeviceType"),  # Connected PD device type
+                "pd_class": poe.get("pdClass"),  # PD class
+                "poe_oper_mode": poe.get("poeOperMode"),  # e.g., "ieee_mode"
+                "pse_oper_status": poe.get("pseOperStatus"),  # PSE operational status
+                "four_pair_enabled": poe.get("fourPairEnabled"),  # 4-pair POE (802.3bt)
+            }
+            poe_interfaces.append(poe_data)
+
+        poe_info = {
+            "device_id": device_id,
+            "poe_interfaces": poe_interfaces,
+            "poe_port_count": len(poe_interfaces),
+            "cached": False,
+        }
+
+        # Cache the result
+        cache.set(cache_key, poe_info, cache_timeout)
+
+        return poe_info
+
     def search_devices(self, search_type, search_value, limit=50):
         """
         Search for devices in Catalyst Center inventory.
@@ -526,7 +725,7 @@ class CatalystCenterClient:
                         "management_ip": device.get("managementIpAddress"),
                         "serial_number": device.get("serialNumber"),
                         "mac_address": device.get("macAddress"),
-                        "platform": device.get("platformId"),
+                        "platform": self._dedupe_platform(device.get("platformId")),
                         "software_version": device.get("softwareVersion"),
                         "software_type": device.get("softwareType"),
                         "device_family": device.get("family"),
@@ -641,7 +840,7 @@ class CatalystCenterClient:
                         "management_ip": device.get("managementIpAddress"),
                         "serial_number": device.get("serialNumber"),
                         "mac_address": device.get("macAddress"),
-                        "platform": device.get("platformId"),
+                        "platform": self._dedupe_platform(device.get("platformId")),
                         "software_version": device.get("softwareVersion"),
                         "software_type": device.get("softwareType"),
                         "device_family": device.get("family"),

@@ -316,9 +316,10 @@ class SyncDeviceFromDNACView(View):
         Sync selected fields from DNAC to NetBox device.
 
         Supports syncing: IP address, serial number, SNMP location, device type,
-        platform (software type/version), and custom fields.
+        platform (software type/version), custom fields, and interfaces.
         """
         import json
+        import traceback
 
         from dcim.models import DeviceType, Manufacturer, Platform
 
@@ -326,6 +327,20 @@ class SyncDeviceFromDNACView(View):
             device = Device.objects.get(pk=pk)
         except Device.DoesNotExist:
             return JsonResponse({"success": False, "error": "Device not found"}, status=404)
+
+        try:
+            return self._do_sync(request, device)
+        except Exception as e:
+            return JsonResponse(
+                {"success": False, "error": f"Sync failed: {str(e)}", "traceback": traceback.format_exc()},
+                status=500
+            )
+
+    def _do_sync(self, request, device):
+        """Internal method to perform the actual sync."""
+        import json
+
+        from dcim.models import DeviceType, Manufacturer, Platform
 
         # Parse sync options from request body
         try:
@@ -338,7 +353,11 @@ class SyncDeviceFromDNACView(View):
         sync_location = body.get("sync_location", False)
         sync_device_type = body.get("sync_device_type", False)
         sync_platform = body.get("sync_platform", False)
-        sync_custom_fields = body.get("sync_custom_fields", False)
+        sync_cc_id = body.get("sync_cc_id", False)
+        sync_cc_series = body.get("sync_cc_series", False)
+        sync_cc_role = body.get("sync_cc_role", False)
+        sync_interfaces = body.get("sync_interfaces", False)
+        sync_poe = body.get("sync_poe", False)
 
         client = get_client()
         if not client:
@@ -479,9 +498,9 @@ class SyncDeviceFromDNACView(View):
                     changes.append(f"Platform: {old_platform} → {software_type}/{software_version}")
                     device_changed = True
 
-        # Sync custom fields
-        if sync_custom_fields:
-            cf_changes = self._sync_custom_fields(device, dnac_data)
+        # Sync custom fields (individual fields)
+        if sync_cc_id or sync_cc_series or sync_cc_role:
+            cf_changes = self._sync_custom_fields(device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role)
             changes.extend(cf_changes)
             if cf_changes:
                 device_changed = True
@@ -489,6 +508,30 @@ class SyncDeviceFromDNACView(View):
         # Save device if any changes were made
         if device_changed:
             device.save()
+
+        # Sync interfaces (after device save, as interfaces are separate objects)
+        if sync_interfaces:
+            device_id = dnac_data.get("device_id")
+            if device_id:
+                try:
+                    iface_result = self._sync_interfaces(device, client, device_id)
+                    changes.extend(iface_result.get("changes", []))
+                except Exception as e:
+                    changes.append(f"Interfaces: error - {str(e)}")
+            else:
+                changes.append("Interfaces: skipped (no device ID)")
+
+        # Sync POE data (separate API call)
+        if sync_poe:
+            device_id = dnac_data.get("device_id")
+            if device_id:
+                try:
+                    poe_result = self._sync_poe(device, client, device_id)
+                    changes.extend(poe_result.get("changes", []))
+                except Exception as e:
+                    changes.append(f"POE: error - {str(e)}")
+            else:
+                changes.append("POE: skipped (no device ID)")
 
         if not changes:
             return JsonResponse(
@@ -499,29 +542,41 @@ class SyncDeviceFromDNACView(View):
             {"success": True, "message": f"Synced {len(changes)} field(s) from Catalyst Center", "changes": changes}
         )
 
-    def _sync_custom_fields(self, device, dnac_data):
+    def _sync_custom_fields(self, device, dnac_data, sync_id=True, sync_series=True, sync_role=True):
         """Sync Catalyst Center custom fields. Returns list of change descriptions."""
         from django.utils import timezone
 
         changes = []
 
-        # Map DNAC fields to custom fields
-        field_mappings = {
-            "cc_device_id": dnac_data.get("device_id"),
-            "cc_series": dnac_data.get("series"),
-            "cc_role": dnac_data.get("role"),
-        }
+        # Sync individual fields based on flags
+        if sync_id:
+            new_id = dnac_data.get("device_id")
+            if new_id:
+                current_value = device.custom_field_data.get("cc_device_id")
+                if current_value != new_id:
+                    device.custom_field_data["cc_device_id"] = new_id
+                    changes.append(f"Catalyst Center ID: {new_id[:20]}...")
 
-        for cf_name, new_value in field_mappings.items():
-            if new_value:
-                current_value = device.custom_field_data.get(cf_name)
-                if current_value != new_value:
-                    device.custom_field_data[cf_name] = new_value
-                    changes.append(f"{cf_name}: {new_value}")
+        if sync_series:
+            new_series = dnac_data.get("series")
+            if new_series:
+                current_value = device.custom_field_data.get("cc_series")
+                if current_value != new_series:
+                    device.custom_field_data["cc_series"] = new_series
+                    changes.append(f"Catalyst Center Series: {new_series}")
 
-        # Always update last sync time when syncing custom fields
-        device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
-        changes.append(f"cc_last_sync: {timezone.now().strftime('%Y-%m-%d %H:%M')}")
+        if sync_role:
+            new_role = dnac_data.get("role")
+            if new_role:
+                current_value = device.custom_field_data.get("cc_role")
+                if current_value != new_role:
+                    device.custom_field_data["cc_role"] = new_role
+                    changes.append(f"Catalyst Center Role: {new_role}")
+
+        # Update last sync time when any custom field is synced
+        if changes:
+            device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+            changes.append(f"cc_last_sync: {timezone.now().strftime('%Y-%m-%d %H:%M')}")
 
         return changes
 
@@ -569,6 +624,645 @@ class SyncDeviceFromDNACView(View):
             changed = True
 
         return {"changes": changes, "changed": changed}
+
+    def _sync_interfaces(self, device, client, device_id):
+        """
+        Sync interfaces from Catalyst Center to NetBox device.
+
+        Returns dict with "changes" list.
+        """
+        from dcim.models import Interface
+
+        changes = []
+
+        # Fetch interfaces from CC
+        iface_result = client.get_device_interfaces(device_id)
+        if "error" in iface_result:
+            changes.append(f"Interfaces: error - {iface_result['error']}")
+            return {"changes": changes}
+
+        cc_interfaces = iface_result.get("interfaces", [])
+        if not cc_interfaces:
+            changes.append("Interfaces: none found in CC")
+            return {"changes": changes}
+
+        # Get existing interfaces on device
+        existing_interfaces = {iface.name: iface for iface in device.interfaces.all()}
+
+        created_count = 0
+        updated_count = 0
+        skipped_count = 0
+
+        for cc_iface in cc_interfaces:
+            iface_name = cc_iface.get("name")
+            if not iface_name:
+                continue
+
+            # Map CC interface type to NetBox type
+            netbox_type = self._map_interface_type(cc_iface)
+
+            # Check if interface exists
+            if iface_name in existing_interfaces:
+                nb_iface = existing_interfaces[iface_name]
+                iface_updated = False
+
+                # Update type if different
+                if nb_iface.type != netbox_type:
+                    nb_iface.type = netbox_type
+                    iface_updated = True
+
+                # Update MAC if available and different
+                cc_mac = self._normalize_mac(cc_iface.get("mac_address"))
+                if cc_mac and str(nb_iface.mac_address).upper() != cc_mac:
+                    nb_iface.mac_address = cc_mac
+                    iface_updated = True
+
+                # Update description if available
+                cc_desc = cc_iface.get("description")
+                if cc_desc and nb_iface.description != cc_desc:
+                    nb_iface.description = cc_desc
+                    iface_updated = True
+
+                # Update MTU if available
+                cc_mtu = self._convert_mtu(cc_iface.get("mtu"))
+                if cc_mtu and nb_iface.mtu != cc_mtu:
+                    nb_iface.mtu = cc_mtu
+                    iface_updated = True
+
+                # Update speed if available
+                cc_speed = cc_iface.get("speed")
+                if cc_speed:
+                    speed_kbps = self._convert_speed_to_kbps(cc_speed)
+                    if speed_kbps and nb_iface.speed != speed_kbps:
+                        nb_iface.speed = speed_kbps
+                        iface_updated = True
+
+                # Update duplex if available
+                cc_duplex = cc_iface.get("duplex")
+                if cc_duplex:
+                    nb_duplex = self._map_duplex(cc_duplex)
+                    if nb_duplex and nb_iface.duplex != nb_duplex:
+                        nb_iface.duplex = nb_duplex
+                        iface_updated = True
+
+                # Update enabled status
+                admin_status = cc_iface.get("admin_status", "").upper()
+                is_enabled = admin_status == "UP"
+                if nb_iface.enabled != is_enabled:
+                    nb_iface.enabled = is_enabled
+                    iface_updated = True
+
+                # Update mode (access/tagged/trunk) if available
+                cc_port_mode = cc_iface.get("port_mode")
+                if cc_port_mode:
+                    nb_mode = self._map_port_mode(cc_port_mode)
+                    if nb_mode and nb_iface.mode != nb_mode:
+                        nb_iface.mode = nb_mode
+                        iface_updated = True
+
+                if iface_updated:
+                    nb_iface.save()
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+            else:
+                # Create new interface
+                admin_status = cc_iface.get("admin_status", "").upper()
+                is_enabled = admin_status == "UP"
+
+                new_iface = Interface(
+                    device=device,
+                    name=iface_name,
+                    type=netbox_type,
+                    description=cc_iface.get("description") or "",
+                    mtu=self._convert_mtu(cc_iface.get("mtu")),
+                    enabled=is_enabled,
+                )
+
+                # Set MAC address (not accepted in constructor)
+                cc_mac = self._normalize_mac(cc_iface.get("mac_address"))
+                if cc_mac:
+                    new_iface.mac_address = cc_mac
+
+                # Set speed
+                cc_speed = cc_iface.get("speed")
+                if cc_speed:
+                    new_iface.speed = self._convert_speed_to_kbps(cc_speed)
+
+                # Set duplex
+                cc_duplex = cc_iface.get("duplex")
+                if cc_duplex:
+                    new_iface.duplex = self._map_duplex(cc_duplex)
+
+                # Set mode (access/tagged/trunk)
+                cc_port_mode = cc_iface.get("port_mode")
+                if cc_port_mode:
+                    nb_mode = self._map_port_mode(cc_port_mode)
+                    if nb_mode:
+                        new_iface.mode = nb_mode
+
+                new_iface.save()
+                created_count += 1
+
+                # Create IP address if available
+                ip_addr = cc_iface.get("ip_address")
+                ip_mask = cc_iface.get("ip_mask")
+                if ip_addr and ip_mask:
+                    self._create_interface_ip(new_iface, ip_addr, ip_mask)
+
+        # Set LAG membership for interfaces that belong to port-channels
+        lag_count = 0
+        # Re-fetch interfaces to get updated list including newly created ones
+        all_interfaces = {iface.name: iface for iface in device.interfaces.all()}
+
+        for cc_iface in cc_interfaces:
+            mapped_lag_name = cc_iface.get("mapped_physical_interface_name")
+            iface_name = cc_iface.get("name")
+
+            if mapped_lag_name and iface_name and iface_name in all_interfaces:
+                # Find the LAG interface
+                if mapped_lag_name in all_interfaces:
+                    lag_iface = all_interfaces[mapped_lag_name]
+                    member_iface = all_interfaces[iface_name]
+
+                    # Only set if not already set
+                    if member_iface.lag != lag_iface:
+                        member_iface.lag = lag_iface
+                        member_iface.save()
+                        lag_count += 1
+
+        # Summary
+        summary_parts = []
+        if created_count:
+            summary_parts.append(f"{created_count} created")
+        if updated_count:
+            summary_parts.append(f"{updated_count} updated")
+        if skipped_count:
+            summary_parts.append(f"{skipped_count} unchanged")
+        if lag_count:
+            summary_parts.append(f"{lag_count} LAG members set")
+
+        if summary_parts:
+            changes.append(f"Interfaces: {', '.join(summary_parts)}")
+        else:
+            changes.append("Interfaces: no changes")
+
+        # Create journal entry with CC interface data
+        self._create_interface_journal(device, cc_interfaces, created_count, updated_count)
+
+        return {"changes": changes}
+
+    def _create_interface_journal(self, device, cc_interfaces, created_count, updated_count):
+        """Create a journal entry on the device with CC interface sync data."""
+        import json
+
+        from django.contrib.contenttypes.models import ContentType
+        from extras.models import JournalEntry
+
+        try:
+            # Build summary of interfaces with key fields
+            interface_summary = []
+            for iface in cc_interfaces[:50]:  # Limit to first 50 to avoid huge entries
+                summary = {
+                    "name": iface.get("name"),
+                    "status": iface.get("status"),
+                    "speed": iface.get("speed"),
+                    "duplex": iface.get("duplex"),
+                    "mac": iface.get("mac_address"),
+                    "ip": iface.get("ip_address"),
+                    "type": iface.get("interface_type"),
+                    "port_mode": iface.get("port_mode"),
+                    "vlan": iface.get("vlan_id"),
+                    "poe": iface.get("poe_enabled"),
+                }
+                # Remove None values for cleaner output
+                summary = {k: v for k, v in summary.items() if v is not None}
+                interface_summary.append(summary)
+
+            # Create journal entry
+            comments = f"**Catalyst Center Interface Sync**\n\n"
+            comments += f"- Created: {created_count}\n"
+            comments += f"- Updated: {updated_count}\n"
+            comments += f"- Total from CC: {len(cc_interfaces)}\n\n"
+            comments += "**Interface Data (JSON):**\n```json\n"
+            comments += json.dumps(interface_summary, indent=2)
+            comments += "\n```"
+
+            if len(cc_interfaces) > 50:
+                comments += f"\n\n*Note: Showing first 50 of {len(cc_interfaces)} interfaces*"
+
+            JournalEntry.objects.create(
+                assigned_object=device,
+                kind="info",
+                comments=comments,
+            )
+        except Exception as e:
+            # Don't fail the sync if journal creation fails
+            import logging
+
+            logging.getLogger(__name__).warning(f"Failed to create journal entry: {e}")
+
+    def _map_interface_type(self, cc_iface):
+        """Map Catalyst Center interface to NetBox interface type.
+
+        Priority: name-based detection first (definitive), then speed-based fallback.
+        Interface names like FortyGigabitEthernet are definitive regardless of
+        current negotiated speed (which may be low if port is disconnected).
+        """
+        name = cc_iface.get("name", "").lower()
+        iface_type = cc_iface.get("interface_type", "").lower()
+        port_type = cc_iface.get("port_type", "").lower()
+        speed = cc_iface.get("speed")
+
+        # Subinterfaces (e.g., TenGigabitEthernet1/1/8.2012) are virtual
+        # Check for "." followed by digits indicating a VLAN subinterface
+        if re.match(r".+\.\d+$", name):
+            return "virtual"
+
+        # LAG / Port-channel
+        if "port-channel" in name or name.split("/")[0] in ("po", "port-channel"):
+            return "lag"
+
+        # VLAN SVI
+        if name.startswith("vlan") or (iface_type == "virtual" and "svi" in port_type):
+            return "virtual"
+
+        # Loopback
+        if "loopback" in name or name.startswith("lo"):
+            return "virtual"
+
+        # Tunnel
+        if "tunnel" in name:
+            return "virtual"
+
+        # Null interfaces
+        if "null" in name:
+            return "virtual"
+
+        # BDI (Bridge Domain Interface)
+        if name.startswith("bdi"):
+            return "virtual"
+
+        # NVE (Network Virtualization Edge)
+        if name.startswith("nve"):
+            return "virtual"
+
+        # Name-based detection FIRST (interface names are definitive)
+        # Extract the interface type prefix before any numbers
+        name_prefix = re.sub(r"\d.*", "", name)  # Remove from first digit onwards
+
+        # Check for specific high-speed interface types by name
+        # These names definitively identify the port type regardless of negotiated speed
+        if name_prefix in ("hundredgigabitethernet", "hundredgige", "hu"):
+            return "100gbase-x-qsfp28"
+        elif name_prefix in ("fortygigabitethernet", "fortygige", "fo"):
+            return "40gbase-x-qsfpp"
+        elif name_prefix in ("twentyfivegigabitethernet", "twentyfivegige", "twe"):
+            return "25gbase-x-sfp28"
+        elif name_prefix in ("tengigabitethernet", "tengige", "te"):
+            return "10gbase-x-sfpp"
+        elif name_prefix in ("fivegigabitethernet", "fivegige", "fi"):
+            return "5gbase-t"
+        elif name_prefix in ("twopointfivegigabitethernet", "twogige", "two"):
+            return "2.5gbase-t"
+        elif name_prefix in ("gigabitethernet", "gi", "ge"):
+            return "1000base-t"
+        elif name_prefix in ("fastethernet", "fa"):
+            return "100base-tx"
+
+        # For generic "ethernet" or unknown names, use speed-based detection
+        if speed:
+            try:
+                speed_int = int(speed)
+                if speed_int >= 100000000000:  # 100G+
+                    return "100gbase-x-qsfp28"
+                elif speed_int >= 40000000000:  # 40G
+                    return "40gbase-x-qsfpp"
+                elif speed_int >= 25000000000:  # 25G
+                    return "25gbase-x-sfp28"
+                elif speed_int >= 10000000000:  # 10G
+                    return "10gbase-x-sfpp"
+                elif speed_int >= 1000000000:  # 1G
+                    return "1000base-t"
+                elif speed_int >= 100000000:  # 100M
+                    return "100base-tx"
+                elif speed_int >= 10000000:  # 10M
+                    return "10base-t"
+            except (ValueError, TypeError):
+                pass
+
+        # Generic ethernet with no speed info
+        if name_prefix in ("ethernet", "eth"):
+            return "1000base-t"  # Default for generic "ethernet"
+
+        # Default
+        return "other"
+
+    def _map_duplex(self, cc_duplex):
+        """Map CC duplex to NetBox duplex."""
+        if not cc_duplex:
+            return None
+        duplex_lower = cc_duplex.lower()
+        if "full" in duplex_lower:
+            return "full"
+        elif "half" in duplex_lower:
+            return "half"
+        elif "auto" in duplex_lower:
+            return "auto"
+        return None
+
+    def _convert_speed_to_kbps(self, speed_bps):
+        """Convert speed from bps (string) to kbps (int)."""
+        if not speed_bps:
+            return None
+        try:
+            bps = int(speed_bps)
+            return bps // 1000  # Convert bps to kbps
+        except (ValueError, TypeError):
+            return None
+
+    def _convert_mtu(self, mtu_value):
+        """Convert MTU to integer, handling string values from CC API."""
+        if not mtu_value:
+            return None
+        try:
+            return int(mtu_value)
+        except (ValueError, TypeError):
+            return None
+
+    def _normalize_mac(self, mac_address):
+        """Normalize MAC address to NetBox format (AA:BB:CC:DD:EE:FF)."""
+        if not mac_address:
+            return None
+        # Remove common separators and convert to uppercase
+        cleaned = mac_address.upper().replace(":", "").replace("-", "").replace(".", "")
+        if len(cleaned) != 12:
+            return None
+        # Format as AA:BB:CC:DD:EE:FF
+        return ":".join(cleaned[i:i+2] for i in range(0, 12, 2))
+
+    def _map_port_mode(self, cc_port_mode):
+        """
+        Map CC port mode to NetBox interface mode.
+
+        CC portMode: "access", "trunk", "routed", "dynamic auto", "dynamic desirable", etc.
+        NetBox mode: "access", "tagged", "tagged-all"
+        """
+        if not cc_port_mode:
+            return None
+
+        mode_lower = cc_port_mode.lower()
+
+        if mode_lower == "access":
+            return "access"
+        elif mode_lower == "trunk":
+            return "tagged"
+        elif mode_lower in ("routed", "layer3"):
+            # L3 routed interfaces don't have a VLAN mode in NetBox
+            return None
+        elif "dynamic" in mode_lower:
+            # Dynamic modes - could be either, default to tagged
+            return "tagged"
+
+        return None
+
+    def _create_interface_ip(self, interface, ip_addr, ip_mask):
+        """Create IP address and assign to interface."""
+        # Convert subnet mask to prefix length
+        prefix_len = self._mask_to_prefix(ip_mask)
+        if not prefix_len:
+            return
+
+        ip_with_prefix = f"{ip_addr}/{prefix_len}"
+
+        # Check if IP already exists
+        existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
+        if existing_ip:
+            # Update assignment if not already assigned to this interface
+            if existing_ip.assigned_object != interface:
+                existing_ip.assigned_object = interface
+                existing_ip.save()
+        else:
+            # Create new IP
+            new_ip = IPAddress(
+                address=ip_with_prefix,
+                assigned_object=interface,
+                description="Synced from Catalyst Center",
+            )
+            new_ip.save()
+
+    def _mask_to_prefix(self, mask):
+        """Convert subnet mask to prefix length."""
+        if not mask:
+            return None
+        try:
+            # Count the number of 1 bits in the mask
+            octets = mask.split(".")
+            if len(octets) != 4:
+                return None
+            binary = "".join(format(int(octet), "08b") for octet in octets)
+            return binary.count("1")
+        except (ValueError, AttributeError):
+            return None
+
+    def _sync_poe(self, device, client, device_id):
+        """
+        Sync POE data from Catalyst Center to NetBox interfaces.
+
+        This requires a separate API call to get POE details.
+        Updates poe_mode and poe_type on matching interfaces.
+
+        Returns dict with "changes" list.
+        """
+        import json
+
+        from extras.models import JournalEntry
+
+        changes = []
+
+        # Fetch POE details from CC
+        poe_result = client.get_device_poe_detail(device_id)
+        if "error" in poe_result:
+            changes.append(f"POE: error - {poe_result['error']}")
+            return {"changes": changes}
+
+        poe_interfaces = poe_result.get("poe_interfaces", [])
+        if not poe_interfaces:
+            changes.append("POE: no POE ports found")
+            return {"changes": changes}
+
+        # Get existing interfaces on device by name
+        existing_interfaces = {iface.name: iface for iface in device.interfaces.all()}
+
+        updated_count = 0
+        skipped_count = 0
+        interfaces_to_update = []
+
+        for poe_data in poe_interfaces:
+            iface_name = poe_data.get("interface_name")
+            if not iface_name or iface_name not in existing_interfaces:
+                skipped_count += 1
+                continue
+
+            nb_iface = existing_interfaces[iface_name]
+            iface_updated = False
+
+            # If a port appears in the POE API response, it's a POE-capable port
+            # Set poe_mode to PSE (Power Sourcing Equipment) for all switch POE ports
+            new_poe_mode = "pse"
+            if nb_iface.poe_mode != new_poe_mode:
+                nb_iface.poe_mode = new_poe_mode
+                iface_updated = True
+
+            # Map IEEE class to NetBox poe_type
+            # CC ieee_class: "class0", "class1", "class2", "class3", "class4", "class5", "class6", etc.
+            # NetBox poe_type: "type1-ieee802.3af", "type2-ieee802.3at", "type3-ieee802.3bt", "type4-ieee802.3bt"
+            ieee_class = (poe_data.get("ieee_class") or "").lower()
+            four_pair = poe_data.get("four_pair_enabled") or False
+            max_port_power = poe_data.get("max_port_power")
+
+            poe_type = None
+            if ieee_class:
+                # If device is connected, use IEEE class (most accurate)
+                poe_type = self._map_poe_type(ieee_class, four_pair)
+            elif max_port_power and not nb_iface.poe_type:
+                # Fallback: derive from max port power (port capability) if not already set
+                poe_type = self._map_poe_type_from_power(max_port_power)
+
+            if poe_type and nb_iface.poe_type != poe_type:
+                nb_iface.poe_type = poe_type
+                iface_updated = True
+
+            if iface_updated:
+                interfaces_to_update.append(nb_iface)
+                updated_count += 1
+            else:
+                skipped_count += 1
+
+        # Bulk update all interfaces in a single database query
+        if interfaces_to_update:
+            from dcim.models import Interface
+            Interface.objects.bulk_update(interfaces_to_update, ["poe_mode", "poe_type"])
+
+        # Summary
+        summary_parts = []
+        if updated_count:
+            summary_parts.append(f"{updated_count} updated")
+        if skipped_count:
+            summary_parts.append(f"{skipped_count} unchanged/skipped")
+
+        if summary_parts:
+            changes.append(f"POE: {', '.join(summary_parts)}")
+        else:
+            changes.append("POE: no changes")
+
+        # Create journal entry with POE data
+        self._create_poe_journal(device, poe_interfaces, updated_count)
+
+        return {"changes": changes}
+
+    def _map_poe_type(self, ieee_class, four_pair=False):
+        """
+        Map IEEE class to NetBox POE type.
+
+        IEEE 802.3af (Type 1): class0-3, up to 15.4W
+        IEEE 802.3at (Type 2): class4, up to 30W
+        IEEE 802.3bt (Type 3): class5-6, up to 60W, 4-pair
+        IEEE 802.3bt (Type 4): class7-8, up to 90-100W, 4-pair
+        """
+        ieee_class = ieee_class.lower().replace("class", "")
+
+        try:
+            class_num = int(ieee_class)
+        except ValueError:
+            return None
+
+        if class_num <= 3:
+            return "type1-ieee802.3af"
+        elif class_num == 4:
+            return "type2-ieee802.3at"
+        elif class_num in (5, 6):
+            return "type3-ieee802.3bt"
+        elif class_num >= 7:
+            return "type4-ieee802.3bt"
+
+        return None
+
+    def _map_poe_type_from_power(self, max_power):
+        """
+        Map max port power (watts) to NetBox POE type.
+
+        Used as fallback when no device is connected (no ieee_class).
+        This indicates the port's capability, not current delivery.
+
+        Power thresholds:
+        - Up to 15.4W: Type 1 (802.3af)
+        - Up to 30W: Type 2 (802.3at / PoE+)
+        - Up to 60W: Type 3 (802.3bt / PoE++)
+        - Up to 90-100W: Type 4 (802.3bt / PoE++)
+        """
+        try:
+            power = float(max_power)
+        except (ValueError, TypeError):
+            return None
+
+        if power <= 15.4:
+            return "type1-ieee802.3af"
+        elif power <= 30:
+            return "type2-ieee802.3at"
+        elif power <= 60:
+            return "type3-ieee802.3bt"
+        elif power > 60:
+            return "type4-ieee802.3bt"
+
+        return None
+
+    def _create_poe_journal(self, device, poe_interfaces, updated_count):
+        """Create a journal entry on the device with POE sync data."""
+        import json
+
+        from extras.models import JournalEntry
+
+        try:
+            # Build summary of POE interfaces
+            poe_summary = []
+            for poe in poe_interfaces[:50]:  # Limit to first 50
+                summary = {
+                    "interface": poe.get("interface_name"),
+                    "status": poe.get("poe_oper_status"),
+                    "ieee_class": poe.get("ieee_class"),
+                    "max_power": poe.get("max_port_power"),
+                    "allocated": poe.get("allocated_power"),
+                    "drawn": poe.get("port_power_drawn"),
+                    "pd_type": poe.get("pd_device_type"),
+                }
+                # Remove None values
+                summary = {k: v for k, v in summary.items() if v is not None}
+                if summary.get("interface"):  # Only include if has interface name
+                    poe_summary.append(summary)
+
+            if not poe_summary:
+                return
+
+            # Create journal entry
+            comments = f"**Catalyst Center POE Sync**\n\n"
+            comments += f"- Updated: {updated_count}\n"
+            comments += f"- Total POE ports: {len(poe_interfaces)}\n\n"
+            comments += "**POE Data (JSON):**\n```json\n"
+            comments += json.dumps(poe_summary, indent=2)
+            comments += "\n```"
+
+            if len(poe_interfaces) > 50:
+                comments += f"\n\n*Note: Showing first 50 of {len(poe_interfaces)} POE ports*"
+
+            JournalEntry.objects.create(
+                assigned_object=device,
+                kind="info",
+                comments=comments,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to create POE journal entry: {e}")
 
 
 class ImportPageView(View):
@@ -672,6 +1366,7 @@ class ImportDevicesView(View):
         devices_to_import = body.get("devices", [])
         default_site_id = body.get("default_site_id")
         default_role_id = body.get("default_role_id")
+        sync_interfaces = body.get("sync_interfaces", False)
 
         if not devices_to_import:
             return JsonResponse({"error": "No devices to import"}, status=400)
@@ -893,6 +1588,55 @@ class ImportDevicesView(View):
 
                     new_device.save()
 
+                # Sync interfaces if requested
+                interface_count = 0
+                poe_count = 0
+                if sync_interfaces:
+                    device_id = dnac_device.get("device_id")
+                    if device_id:
+                        client = get_client()
+                        if client:
+                            try:
+                                # Use the sync view's interface sync method
+                                sync_view = SyncDeviceFromDNACView()
+                                iface_result = sync_view._sync_interfaces(new_device, client, device_id)
+                                # Parse interface count from result
+                                for change in iface_result.get("changes", []):
+                                    if "created" in change:
+                                        # Extract number like "153 created"
+                                        parts = change.split()
+                                        for i, part in enumerate(parts):
+                                            if part == "created" and i > 0:
+                                                try:
+                                                    interface_count = int(parts[i - 1])
+                                                except ValueError:
+                                                    pass
+
+                                # Now sync POE data (interfaces exist, so POE can update them)
+                                try:
+                                    poe_result = sync_view._sync_poe(new_device, client, device_id)
+                                    # Parse POE count from result
+                                    for change in poe_result.get("changes", []):
+                                        if "updated" in change:
+                                            parts = change.split()
+                                            for i, part in enumerate(parts):
+                                                if part == "updated" and i > 0:
+                                                    try:
+                                                        poe_count = int(parts[i - 1])
+                                                    except ValueError:
+                                                        pass
+                                except Exception as poe_err:
+                                    import logging
+                                    logging.getLogger(__name__).warning(
+                                        f"Failed to sync POE for {hostname_base}: {poe_err}"
+                                    )
+                            except Exception as iface_err:
+                                # Log but don't fail the import
+                                import logging
+                                logging.getLogger(__name__).warning(
+                                    f"Failed to sync interfaces for {hostname_base}: {iface_err}"
+                                )
+
                 results["created"].append(
                     {
                         "hostname": hostname_base,
@@ -900,6 +1644,8 @@ class ImportDevicesView(View):
                         "device_type": device_type.model,
                         "ip": management_ip,
                         "platform": f"{software_type}/{software_version}" if software_type else None,
+                        "interface_count": interface_count,
+                        "poe_count": poe_count,
                     }
                 )
 

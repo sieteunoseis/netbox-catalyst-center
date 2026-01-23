@@ -7,12 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Interface Sync from Catalyst Center** (GitHub Issue #1)
+  - Sync network interfaces from Catalyst Center to NetBox
+  - Creates new interfaces if they don't exist, updates existing ones
+  - Syncs interface attributes: description, MAC address, MTU, speed, duplex, enabled status, **mode (access/tagged)**
+  - Creates IP addresses for interfaces with IPs configured
+  - Maps Catalyst Center interface types to NetBox types (1000base-t, 10gbase-x-sfpp, lag, virtual)
+  - Sets LAG membership for interfaces that belong to port-channels
+  - **Import page now includes "Sync Interfaces" option** to import all interfaces during device import
+  - **Journal logging**: Creates device journal entry with CC interface data (JSON) after sync
+- **POE Data Capture**
+  - Interface API now captures POE fields from Catalyst Center (poe_enabled, poe_status, power values)
+- **POE Sync Feature** (GitHub Issue #1)
+  - New "Sync POE Data" option on device Catalyst Center tab
+  - Fetches POE details from separate CC API endpoint (`/network-device/{id}/interface/poe-detail`)
+  - Updates NetBox interface `poe_mode` (PSE for switch ports) and `poe_type` (802.3af/at/bt)
+  - Maps IEEE class to NetBox POE types: class0-3→802.3af, class4→802.3at, class5-8→802.3bt
+  - **Fallback to max_port_power**: For ports without connected devices, derives poe_type from port's maximum power capability
+  - Creates journal entry with POE data after sync
+  - **POE sync during import**: Automatically syncs POE data after interfaces are created during device import
+  - **Import results show POE count**: Displays blue POE badge alongside interface count
+- **Stack/Virtual Chassis Detection**
+  - Detects stacked switches via `lineCardCount` or comma-separated serial/platform values
+  - Shows "Stack (N)" badge on Catalyst Center tab for stacked devices
+  - Displays per-member serial numbers and platforms for stacks
+  - Deduplicates platform IDs (e.g., "C9300-48P, C9300-48P" → "C9300-48P")
+
 ### Changed
 
 - Import now populates Platform (software type/version hierarchy)
 - Import now populates custom fields (cc_device_id, cc_series, cc_role, cc_last_sync)
 - Import now uses "other" interface type instead of "virtual" for Management interface
 - Search results now include software_type field
+- Sync UI now shows current NetBox value vs new CC value with visual comparison
+- Sync UI highlights already-synced fields with green background and checkmark
+- Sync checkboxes auto-unchecked when values already match
+
+### Fixed
+
+- Interface type mapping now correctly identifies subinterfaces (e.g., TenGigabitEthernet1/1/8.2012) as "virtual"
+- Fixed bug where GigabitEthernet interfaces were incorrectly classified as 10GE due to "te" substring match
+- Interface type detection now uses proper prefix matching instead of substring matching
+- **Fixed interface type mapping priority**: Name-based detection now runs BEFORE speed-based detection
+  - Prevents FortyGigabitEthernet/TenGigabitEthernet ports from being classified as 10base-t when CC reports low negotiated speed (e.g., disconnected ports)
+  - Interface names are now definitive: FortyGigabitEthernet → 40gbase-x-qsfpp, TenGigabitEthernet → 10gbase-x-sfpp, etc.
 
 ## [1.2.0] - 2025-01-22
 

@@ -127,6 +127,18 @@
                     </div>
                 </div>
 
+                <div class="row g-3 mt-2">
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="import-interfaces" checked>
+                            <label class="form-check-label" for="import-interfaces">
+                                <strong>Sync Interfaces</strong>
+                                <br><small class="text-muted">Import all interfaces from Catalyst Center including IPs, speeds, descriptions, LAG membership, and POE settings</small>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
                 <hr class="my-4">
 
                 <div class="d-flex justify-content-between align-items-center">
@@ -194,7 +206,17 @@
                     <li>Management IP</li>
                     <li>Device type (from platform)</li>
                     <li>Device role (auto-detected)</li>
+                    <li>Platform (software type/version)</li>
                     <li>SNMP location (in comments)</li>
+                    <li>Custom fields (CC ID, series, role)</li>
+                </ul>
+                <h6 class="mt-2">With "Sync Interfaces"</h6>
+                <ul class="small mb-0">
+                    <li>All network interfaces</li>
+                    <li>IP addresses on interfaces</li>
+                    <li>LAG/Port-channel membership</li>
+                    <li>Speed, MTU, duplex settings</li>
+                    <li>POE mode and type</li>
                 </ul>
             </div>
         </div>
@@ -205,10 +227,14 @@
                 <h6 class="card-title text-info">
                     <i class="mdi mdi-information"></i> One-Way Import
                 </h6>
-                <p class="card-text small mb-0">
+                <p class="card-text small mb-2">
                     This is a <strong>one-way import only</strong>. Devices are created in NetBox
                     but changes made in NetBox are not synced back to Catalyst Center.
                     Maximum <strong>25 devices</strong> can be imported at a time.
+                </p>
+                <p class="card-text small mb-0">
+                    <i class="mdi mdi-sync"></i> After import, use the <strong>Catalyst Center</strong> tab on each device
+                    to sync additional fields like serial number, platform, and interfaces.
                 </p>
             </div>
         </div>
@@ -340,7 +366,8 @@ function renderSearchResults(devices, totalInDnac) {
     var newCount = devices.filter(d => !d.exists_in_netbox).length;
     var existingCount = devices.filter(d => d.exists_in_netbox).length;
 
-    document.getElementById('result-count').textContent = devices.length + ' devices found';
+    document.getElementById('result-count').textContent = devices.length + ' device' + (devices.length !== 1 ? 's' : '') + ' found';
+    document.getElementById('result-count').className = 'badge bg-primary me-2';
     document.getElementById('result-info').textContent =
         '(' + newCount + ' new, ' + existingCount + ' already in NetBox, ' + totalInDnac + ' total in inventory)';
 
@@ -452,7 +479,14 @@ document.getElementById('import-btn').addEventListener('click', function() {
         return;
     }
 
-    if (!confirm('Import ' + selectedDevices.length + ' device(s) to NetBox?\n\nThis will create new device records with management interfaces and IP addresses.')) {
+    var syncInterfaces = document.getElementById('import-interfaces').checked;
+    var confirmMsg = 'Import ' + selectedDevices.length + ' device(s) to NetBox?\n\n';
+    if (syncInterfaces) {
+        confirmMsg += 'This will create device records with all interfaces, IPs, and LAG membership from Catalyst Center.';
+    } else {
+        confirmMsg += 'This will create device records with a basic management interface.';
+    }
+    if (!confirm(confirmMsg)) {
         return;
     }
 
@@ -471,7 +505,8 @@ document.getElementById('import-btn').addEventListener('click', function() {
         body: JSON.stringify({
             devices: selectedDevices,
             default_site_id: parseInt(siteId),
-            default_role_id: roleId ? parseInt(roleId) : null
+            default_role_id: roleId ? parseInt(roleId) : null,
+            sync_interfaces: document.getElementById('import-interfaces').checked
         })
     })
     .then(response => response.json())
@@ -494,8 +529,16 @@ document.getElementById('import-btn').addEventListener('click', function() {
                 html += '<div class="card mb-2"><div class="card-header bg-success text-white">Created Devices</div>' +
                     '<ul class="list-group list-group-flush">';
                 data.results.created.forEach(function(d) {
+                    var stats = [];
+                    if (d.interface_count) {
+                        stats.push('<i class="mdi mdi-ethernet text-primary"></i> <strong>' + d.interface_count + '</strong> interfaces');
+                    }
+                    if (d.poe_count) {
+                        stats.push('<i class="mdi mdi-flash text-warning"></i> <strong>' + d.poe_count + '</strong> POE ports');
+                    }
+                    var statsHtml = stats.length > 0 ? '<br><small>' + stats.join(' &nbsp;|&nbsp; ') + '</small>' : '';
                     html += '<li class="list-group-item d-flex justify-content-between align-items-center">' +
-                        '<span><i class="mdi mdi-check text-success me-2"></i>' + d.hostname + ' (' + d.device_type + ')</span>' +
+                        '<div><i class="mdi mdi-check text-success me-2"></i><strong>' + d.hostname + '</strong> <span class="text-muted">(' + d.device_type + ')</span>' + statsHtml + '</div>' +
                         '<a href="/dcim/devices/' + d.netbox_id + '/" class="btn btn-sm btn-outline-primary">View</a></li>';
                 });
                 html += '</ul></div>';
