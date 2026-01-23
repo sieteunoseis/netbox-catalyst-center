@@ -318,10 +318,7 @@ class SyncDeviceFromDNACView(View):
         Supports syncing: IP address, serial number, SNMP location, device type,
         platform (software type/version), custom fields, and interfaces.
         """
-        import json
         import traceback
-
-        from dcim.models import DeviceType, Manufacturer, Platform
 
         try:
             device = Device.objects.get(pk=pk)
@@ -815,7 +812,6 @@ class SyncDeviceFromDNACView(View):
         """Create a journal entry on the device with CC interface sync data."""
         import json
 
-        from django.contrib.contenttypes.models import ContentType
         from extras.models import JournalEntry
 
         try:
@@ -839,7 +835,7 @@ class SyncDeviceFromDNACView(View):
                 interface_summary.append(summary)
 
             # Create journal entry
-            comments = f"**Catalyst Center Interface Sync**\n\n"
+            comments = "**Catalyst Center Interface Sync**\n\n"
             comments += f"- Created: {created_count}\n"
             comments += f"- Updated: {updated_count}\n"
             comments += f"- Total from CC: {len(cc_interfaces)}\n\n"
@@ -1073,10 +1069,6 @@ class SyncDeviceFromDNACView(View):
 
         Returns dict with "changes" list.
         """
-        import json
-
-        from extras.models import JournalEntry
-
         changes = []
 
         # Fetch POE details from CC
@@ -1245,7 +1237,7 @@ class SyncDeviceFromDNACView(View):
                 return
 
             # Create journal entry
-            comments = f"**Catalyst Center POE Sync**\n\n"
+            comments = "**Catalyst Center POE Sync**\n\n"
             comments += f"- Updated: {updated_count}\n"
             comments += f"- Total POE ports: {len(poe_interfaces)}\n\n"
             comments += "**POE Data (JSON):**\n```json\n"
