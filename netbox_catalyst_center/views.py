@@ -144,7 +144,9 @@ class DeviceCatalystCenterView(generic.ObjectView):
 
     def get(self, request, pk):
         """Handle GET request for the Catalyst Center tab."""
-        device = Device.objects.get(pk=pk)
+        device = Device.objects.select_related(
+            'device_type__manufacturer', 'platform', 'primary_ip4', 'primary_ip6'
+        ).prefetch_related('interfaces').get(pk=pk)
 
         client = get_client()
         config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})

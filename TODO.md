@@ -39,13 +39,25 @@
 - Show non-compliant items and remediation status
 - **Use case:** Configuration drift detection, audit readiness
 
-#### 3. Device Interfaces
+#### 3. Device Interfaces & Interface Import
 **API:** `GET /dna/intent/api/v1/interface/network-device/{deviceId}`
+**GitHub Issue:** [#1 - Import network interfaces from Catalyst Center](https://github.com/sieteunoseis/netbox-catalyst-center/issues/1)
+
+**Display Features:**
 - Live interface status from DNAC
 - Interface speed, duplex, admin/oper status
 - VLAN assignments, error counts
 - Compare with NetBox interface data
 - **Use case:** Troubleshooting, inventory validation
+
+**Import Features (New):**
+- Import interfaces when importing devices to NetBox
+- Create interfaces with: name, description, MAC, type, speed, MTU
+- Optionally create and assign IP addresses
+- Map interface types (Physical, Virtual, Loopback, Port-channel, etc.)
+- Handle VLANs (untagged_vlan, voice VLAN)
+- Duplicate detection to prevent re-import issues
+- **Use case:** Complete device documentation, cable management
 
 #### 4. Active Issues
 **API:** `POST /dna/data/api/v1/assuranceIssues/query`
