@@ -662,7 +662,7 @@ class ImportDevicesView(View):
         """
         import json
 
-        from dcim.models import DeviceRole, DeviceType, Interface, Manufacturer, Site
+        from dcim.models import DeviceRole, DeviceType, Interface, Manufacturer, Platform, Site
 
         try:
             body = json.loads(request.body) if request.body else {}
@@ -718,6 +718,8 @@ class ImportDevicesView(View):
             serial = dnac_device.get("serial_number", "")
             platform = dnac_device.get("platform", "")
             management_ip = dnac_device.get("management_ip", "")
+            software_type = dnac_device.get("software_type", "")
+            software_version = dnac_device.get("software_version", "")
 
             # Deduplicate platform if it contains duplicates (e.g., "C9800-40-K9, C9800-40-K9")
             if platform and "," in platform:
@@ -811,6 +813,34 @@ class ImportDevicesView(View):
                 )
 
             try:
+                # Create or get platform if software info available
+                device_platform = None
+                if software_type and software_version:
+                    # Get or create parent platform (software type)
+                    parent_platform, _ = Platform.objects.get_or_create(
+                        slug=software_type.lower().replace(" ", "-"),
+                        defaults={"name": software_type},
+                    )
+
+                    # Get or create child platform (software version under parent)
+                    child_slug = (
+                        f"{software_type.lower()}-{software_version.lower()}".replace(" ", "-")
+                        .replace("(", "")
+                        .replace(")", "")
+                    )
+                    device_platform, _ = Platform.objects.get_or_create(
+                        slug=child_slug,
+                        defaults={
+                            "name": software_version,
+                            "parent": parent_platform,
+                        },
+                    )
+
+                    # Update parent if it was created without one
+                    if device_platform.parent != parent_platform:
+                        device_platform.parent = parent_platform
+                        device_platform.save()
+
                 # Create the device
                 new_device = Device(
                     name=hostname_base,
@@ -819,15 +849,25 @@ class ImportDevicesView(View):
                     site=default_site,
                     serial=serial or "",
                     status="active",
+                    platform=device_platform,
                     comments=f"Imported from Catalyst Center\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
                 )
                 new_device.save()
 
-                # Create a management interface
+                # Populate custom fields
+                from django.utils import timezone
+
+                new_device.custom_field_data["cc_device_id"] = dnac_device.get("device_id", "")
+                new_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
+                new_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
+                new_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+                new_device.save()
+
+                # Create a management interface (use 'other' type for management)
                 mgmt_interface = Interface(
                     device=new_device,
                     name="Management",
-                    type="virtual",
+                    type="other",
                 )
                 mgmt_interface.save()
 
@@ -859,6 +899,7 @@ class ImportDevicesView(View):
                         "netbox_id": new_device.pk,
                         "device_type": device_type.model,
                         "ip": management_ip,
+                        "platform": f"{software_type}/{software_version}" if software_type else None,
                     }
                 )
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Import now populates Platform (software type/version hierarchy)
+- Import now populates custom fields (cc_device_id, cc_series, cc_role, cc_last_sync)
+- Import now uses "other" interface type instead of "virtual" for Management interface
+- Search results now include software_type field
+
 ## [1.2.0] - 2025-01-22
 
 ### Added
