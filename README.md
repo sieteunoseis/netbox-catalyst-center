@@ -61,7 +61,7 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 
 ## Installation
 
-### From PyPI (when published)
+### From PyPI (recommended)
 
 ```bash
 pip install netbox-catalyst-center
