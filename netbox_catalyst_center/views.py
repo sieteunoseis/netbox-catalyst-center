@@ -332,8 +332,7 @@ class SyncDeviceFromDNACView(View):
             return self._do_sync(request, device)
         except Exception as e:
             return JsonResponse(
-                {"success": False, "error": f"Sync failed: {str(e)}", "traceback": traceback.format_exc()},
-                status=500
+                {"success": False, "error": f"Sync failed: {str(e)}", "traceback": traceback.format_exc()}, status=500
             )
 
     def _do_sync(self, request, device):
@@ -999,7 +998,7 @@ class SyncDeviceFromDNACView(View):
         if len(cleaned) != 12:
             return None
         # Format as AA:BB:CC:DD:EE:FF
-        return ":".join(cleaned[i:i+2] for i in range(0, 12, 2))
+        return ":".join(cleaned[i : i + 2] for i in range(0, 12, 2))
 
     def _map_port_mode(self, cc_port_mode):
         """
@@ -1142,6 +1141,7 @@ class SyncDeviceFromDNACView(View):
         # Bulk update all interfaces in a single database query
         if interfaces_to_update:
             from dcim.models import Interface
+
             Interface.objects.bulk_update(interfaces_to_update, ["poe_mode", "poe_type"])
 
         # Summary
@@ -1262,6 +1262,7 @@ class SyncDeviceFromDNACView(View):
             )
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).warning(f"Failed to create POE journal entry: {e}")
 
 
@@ -1627,12 +1628,14 @@ class ImportDevicesView(View):
                                                         pass
                                 except Exception as poe_err:
                                     import logging
+
                                     logging.getLogger(__name__).warning(
                                         f"Failed to sync POE for {hostname_base}: {poe_err}"
                                     )
                             except Exception as iface_err:
                                 # Log but don't fail the import
                                 import logging
+
                                 logging.getLogger(__name__).warning(
                                     f"Failed to sync interfaces for {hostname_base}: {iface_err}"
                                 )
