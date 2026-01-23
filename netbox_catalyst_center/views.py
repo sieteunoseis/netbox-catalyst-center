@@ -315,9 +315,12 @@ class SyncDeviceFromDNACView(View):
         """
         Sync selected fields from DNAC to NetBox device.
 
-        Supports syncing: IP address, serial number, SNMP location (to comments).
+        Supports syncing: IP address, serial number, SNMP location, device type,
+        platform (software type/version), and custom fields.
         """
         import json
+
+        from dcim.models import DeviceType, Manufacturer, Platform
 
         try:
             device = Device.objects.get(pk=pk)
@@ -333,6 +336,9 @@ class SyncDeviceFromDNACView(View):
         sync_ip = body.get("sync_ip", True)  # Default to True for backwards compatibility
         sync_serial = body.get("sync_serial", False)
         sync_location = body.get("sync_location", False)
+        sync_device_type = body.get("sync_device_type", False)
+        sync_platform = body.get("sync_platform", False)
+        sync_custom_fields = body.get("sync_custom_fields", False)
 
         client = get_client()
         if not client:
@@ -398,6 +404,88 @@ class SyncDeviceFromDNACView(View):
                     changes.append("Added SNMP location to comments")
                     device_changed = True
 
+        # Sync Device Type from CC platform_id
+        if sync_device_type:
+            platform_id = dnac_data.get("platform")
+            if platform_id:
+                # Deduplicate platform if it contains duplicates (e.g., "C9800-40-K9, C9800-40-K9")
+                if "," in platform_id:
+                    platform_parts = [p.strip() for p in platform_id.split(",")]
+                    seen = set()
+                    unique_parts = []
+                    for p in platform_parts:
+                        if p and p not in seen:
+                            seen.add(p)
+                            unique_parts.append(p)
+                    platform_id = unique_parts[0] if unique_parts else platform_id
+
+                # Get or create Cisco manufacturer
+                cisco_mfr, _ = Manufacturer.objects.get_or_create(
+                    slug="cisco",
+                    defaults={"name": "Cisco"},
+                )
+
+                # Get or create device type
+                device_type, dt_created = DeviceType.objects.get_or_create(
+                    manufacturer=cisco_mfr,
+                    model=platform_id,
+                    defaults={
+                        "slug": platform_id.lower().replace(" ", "-").replace("/", "-"),
+                    },
+                )
+
+                if device.device_type != device_type:
+                    old_type = device.device_type.model if device.device_type else "None"
+                    device.device_type = device_type
+                    changes.append(f"Device Type: {old_type} → {platform_id}")
+                    device_changed = True
+
+        # Sync Platform (software type as parent, software version as child)
+        if sync_platform:
+            software_type = dnac_data.get("software_type")  # e.g., "IOS-XE", "IOS"
+            software_version = dnac_data.get("software_version")  # e.g., "17.9.4a"
+
+            if software_type and software_version:
+                # Get or create parent platform (software type)
+                parent_platform, _ = Platform.objects.get_or_create(
+                    slug=software_type.lower().replace(" ", "-"),
+                    defaults={
+                        "name": software_type,
+                    },
+                )
+
+                # Get or create child platform (software version under parent)
+                child_slug = (
+                    f"{software_type.lower()}-{software_version.lower()}".replace(" ", "-")
+                    .replace("(", "")
+                    .replace(")", "")
+                )
+                child_platform, _ = Platform.objects.get_or_create(
+                    slug=child_slug,
+                    defaults={
+                        "name": software_version,
+                        "parent": parent_platform,
+                    },
+                )
+
+                # Update parent if it was created without one
+                if child_platform.parent != parent_platform:
+                    child_platform.parent = parent_platform
+                    child_platform.save()
+
+                if device.platform != child_platform:
+                    old_platform = device.platform.name if device.platform else "None"
+                    device.platform = child_platform
+                    changes.append(f"Platform: {old_platform} → {software_type}/{software_version}")
+                    device_changed = True
+
+        # Sync custom fields
+        if sync_custom_fields:
+            cf_changes = self._sync_custom_fields(device, dnac_data)
+            changes.extend(cf_changes)
+            if cf_changes:
+                device_changed = True
+
         # Save device if any changes were made
         if device_changed:
             device.save()
@@ -410,6 +498,32 @@ class SyncDeviceFromDNACView(View):
         return JsonResponse(
             {"success": True, "message": f"Synced {len(changes)} field(s) from Catalyst Center", "changes": changes}
         )
+
+    def _sync_custom_fields(self, device, dnac_data):
+        """Sync Catalyst Center custom fields. Returns list of change descriptions."""
+        from django.utils import timezone
+
+        changes = []
+
+        # Map DNAC fields to custom fields
+        field_mappings = {
+            "cc_device_id": dnac_data.get("device_id"),
+            "cc_series": dnac_data.get("series"),
+            "cc_role": dnac_data.get("role"),
+        }
+
+        for cf_name, new_value in field_mappings.items():
+            if new_value:
+                current_value = device.custom_field_data.get(cf_name)
+                if current_value != new_value:
+                    device.custom_field_data[cf_name] = new_value
+                    changes.append(f"{cf_name}: {new_value}")
+
+        # Always update last sync time when syncing custom fields
+        device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+        changes.append(f"cc_last_sync: {timezone.now().strftime('%Y-%m-%d %H:%M')}")
+
+        return changes
 
     def _sync_ip_address(self, device, dnac_ip):
         """Sync IP address from DNAC to device. Returns dict with changes and error."""

@@ -5,9 +5,13 @@ Display Cisco Catalyst Center (DNA Center) client details in Device detail pages
 Shows real-time IP address, connected AP, health score, and connection status.
 """
 
+import logging
+
 from netbox.plugins import PluginConfig
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
+
+logger = logging.getLogger(__name__)
 
 
 class CatalystCenterConfig(PluginConfig):
@@ -47,6 +51,97 @@ class CatalystCenterConfig(PluginConfig):
             {"manufacturer": r"cisco", "lookup": "hostname"},  # Cisco devices by hostname
         ],
     }
+
+    def ready(self):
+        """Initialize plugin - create custom fields if they don't exist."""
+        super().ready()
+        self._ensure_custom_fields()
+
+    def _ensure_custom_fields(self):
+        """Create custom fields for Catalyst Center data if they don't exist."""
+        from django.contrib.contenttypes.models import ContentType
+        from django.db import OperationalError, ProgrammingError
+
+        try:
+            from dcim.models import Device
+            from extras.models import CustomField, CustomFieldChoiceSet
+
+            device_ct = ContentType.objects.get_for_model(Device)
+
+            # Define custom fields
+            fields_config = [
+                {
+                    "name": "cc_device_id",
+                    "label": "CC Device ID",
+                    "type": "text",
+                    "description": "Catalyst Center device UUID for linking to CC UI",
+                },
+                {
+                    "name": "cc_series",
+                    "label": "CC Device Series",
+                    "type": "text",
+                    "description": "Device series from Catalyst Center (e.g., Cisco Catalyst 9300 Series)",
+                },
+                {
+                    "name": "cc_role",
+                    "label": "CC Network Role",
+                    "type": "select",
+                    "description": "Network role from Catalyst Center",
+                    "choices": ["ACCESS", "DISTRIBUTION", "CORE", "BORDER ROUTER", "UNKNOWN"],
+                },
+                {
+                    "name": "cc_last_sync",
+                    "label": "CC Last Sync",
+                    "type": "datetime",
+                    "description": "When data was last synced from Catalyst Center",
+                },
+            ]
+
+            for field_config in fields_config:
+                # Handle select field with choice set
+                choice_set = None
+                if field_config["type"] == "select" and "choices" in field_config:
+                    choice_set, _ = CustomFieldChoiceSet.objects.get_or_create(
+                        name="CC Network Roles",
+                        defaults={
+                            "extra_choices": [
+                                ["ACCESS", "Access"],
+                                ["DISTRIBUTION", "Distribution"],
+                                ["CORE", "Core"],
+                                ["BORDER ROUTER", "Border Router"],
+                                ["UNKNOWN", "Unknown"],
+                            ]
+                        },
+                    )
+
+                defaults = {
+                    "label": field_config["label"],
+                    "type": field_config["type"],
+                    "description": field_config["description"],
+                    "group_name": "Catalyst Center",
+                    "ui_visible": "if-set",
+                    "ui_editable": "yes",
+                }
+                if choice_set:
+                    defaults["choice_set"] = choice_set
+
+                cf, created = CustomField.objects.get_or_create(
+                    name=field_config["name"],
+                    defaults=defaults,
+                )
+
+                # Ensure field is assigned to Device model
+                if device_ct not in cf.object_types.all():
+                    cf.object_types.add(device_ct)
+
+                if created:
+                    logger.info(f"Created custom field: {field_config['name']}")
+
+        except (OperationalError, ProgrammingError):
+            # Database not ready (e.g., during migrations)
+            pass
+        except Exception as e:
+            logger.warning(f"Could not create custom fields: {e}")
 
 
 config = CatalystCenterConfig

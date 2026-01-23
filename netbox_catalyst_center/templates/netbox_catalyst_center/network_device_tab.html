@@ -339,7 +339,8 @@
             <div class="card-body">
                 <p class="text-muted small mb-2">Select fields to sync from Catalyst Center to NetBox:</p>
                 <div class="row">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
+                        <h6 class="text-muted mb-2">Basic Fields</h6>
                         {% if client_data.management_ip %}
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="sync-ip" checked>
@@ -358,20 +359,56 @@
                             </label>
                         </div>
                         {% endif %}
-                    </div>
-                    <div class="col-md-6">
                         {% if client_data.snmp_location %}
-                        <div class="form-check">
+                        <div class="form-check mt-2">
                             <input class="form-check-input" type="checkbox" id="sync-location">
                             <label class="form-check-label" for="sync-location">
                                 <strong>SNMP Location</strong> <span class="badge bg-info text-dark">to comments</span>
-                                <br><small class="text-muted">{{ client_data.snmp_location|truncatechars:50 }}</small>
+                                <br><small class="text-muted">{{ client_data.snmp_location|truncatechars:40 }}</small>
                             </label>
                         </div>
                         {% endif %}
                     </div>
+                    <div class="col-md-4">
+                        <h6 class="text-muted mb-2">Device Type & Platform</h6>
+                        {% if client_data.platform %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="sync-device-type">
+                            <label class="form-check-label" for="sync-device-type">
+                                <strong>Device Type</strong>
+                                <br><small class="text-muted">Cisco/{{ client_data.platform }}</small>
+                            </label>
+                        </div>
+                        {% endif %}
+                        {% if client_data.software_type and client_data.software_version %}
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="sync-platform">
+                            <label class="form-check-label" for="sync-platform">
+                                <strong>Platform</strong>
+                                <br><small class="text-muted">{{ client_data.software_type }}/{{ client_data.software_version }}</small>
+                            </label>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-4">
+                        <h6 class="text-muted mb-2">Custom Fields</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="sync-custom-fields">
+                            <label class="form-check-label" for="sync-custom-fields">
+                                <strong>CC Custom Fields</strong>
+                                <br><small class="text-muted">
+                                    {% if client_data.device_id %}ID: {{ client_data.device_id|truncatechars:12 }}{% endif %}
+                                    {% if client_data.series %}<br>Series: {{ client_data.series|truncatechars:30 }}{% endif %}
+                                    {% if client_data.role %}<br>Role: {{ client_data.role }}{% endif %}
+                                </small>
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="mt-3">
+                    <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="select-all-btn">
+                        <i class="mdi mdi-checkbox-multiple-marked"></i> Select All
+                    </button>
                     <button type="button" class="btn btn-success btn-sm" id="sync-from-dnac-btn">
                         <i class="mdi mdi-sync"></i> Sync Selected
                     </button>
@@ -398,6 +435,16 @@
 
         {% if client_data %}
         <script>
+        // Select All button
+        document.getElementById('select-all-btn').addEventListener('click', function() {
+            var checkboxes = document.querySelectorAll('.form-check-input');
+            var allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+            this.innerHTML = allChecked ?
+                '<i class="mdi mdi-checkbox-multiple-marked"></i> Select All' :
+                '<i class="mdi mdi-checkbox-multiple-blank-outline"></i> Deselect All';
+        });
+
         document.getElementById('sync-from-dnac-btn').addEventListener('click', function() {
             var btn = this;
             var resultSpan = document.getElementById('sync-result');
@@ -406,11 +453,15 @@
             var syncOptions = {
                 sync_ip: document.getElementById('sync-ip') ? document.getElementById('sync-ip').checked : false,
                 sync_serial: document.getElementById('sync-serial') ? document.getElementById('sync-serial').checked : false,
-                sync_location: document.getElementById('sync-location') ? document.getElementById('sync-location').checked : false
+                sync_location: document.getElementById('sync-location') ? document.getElementById('sync-location').checked : false,
+                sync_device_type: document.getElementById('sync-device-type') ? document.getElementById('sync-device-type').checked : false,
+                sync_platform: document.getElementById('sync-platform') ? document.getElementById('sync-platform').checked : false,
+                sync_custom_fields: document.getElementById('sync-custom-fields') ? document.getElementById('sync-custom-fields').checked : false
             };
 
             // Check if at least one option is selected
-            if (!syncOptions.sync_ip && !syncOptions.sync_serial && !syncOptions.sync_location) {
+            var anySelected = Object.values(syncOptions).some(v => v);
+            if (!anySelected) {
                 resultSpan.innerHTML = '<span class="text-warning"><i class="mdi mdi-alert"></i> Please select at least one field to sync</span>';
                 return;
             }

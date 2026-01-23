@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-01-22
+
+### Added
+
+- **Extended Sync Functionality**
+  - Sync Device Type from Catalyst Center platform ID (e.g., C9300-48P)
+  - Sync Platform with hierarchy: software type (IOS-XE) as parent, version (17.9.4a) as child
+  - Sync custom fields for Catalyst Center data:
+    - `cc_device_id` - Catalyst Center UUID for linking to CC UI
+    - `cc_series` - Device series (e.g., "Cisco Catalyst 9300 Series")
+    - `cc_role` - Network role (ACCESS, DISTRIBUTION, CORE, BORDER ROUTER)
+    - `cc_last_sync` - Timestamp of last sync from Catalyst Center
+  - "Select All" button for sync options
+
+- **Auto-Create Custom Fields**
+  - Custom fields are automatically created when the plugin loads
+  - Fields grouped under "Catalyst Center" in the device edit form
+  - `ui_visible: if-set` - fields only show when populated
+
+### Changed
+
+- Improved sync UI with three columns: Basic Fields, Device Type & Platform, Custom Fields
+- Device Type sync creates `Cisco/{platform_id}` for specific hardware tracking
+
 ## [1.1.0] - 2025-01-21
 
 ### Added
@@ -77,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10+ required
 - Apache 2.0 license
 
-[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/sieteunoseis/netbox-catalyst-center/releases/tag/v1.0.0
