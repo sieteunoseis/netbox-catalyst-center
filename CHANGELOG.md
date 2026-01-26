@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-01-26
+
+### Fixed
+
+- **PyPI Release**: Re-release of v1.3.0 due to PyPI version conflict (incomplete upload before PR merge)
+
 ## [1.3.0] - 2026-01-26
 
 ### Added
@@ -171,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10+ required
 - Apache 2.0 license
 
-[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.1...v1.2.2

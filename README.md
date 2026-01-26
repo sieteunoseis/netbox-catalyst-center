@@ -31,6 +31,14 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 - **One-Way Import**: Import devices from Catalyst Center into NetBox (one-way only)
 - **Auto-detect Device Role**: Automatically maps Catalyst Center device family to NetBox roles
 - **Duplicate Detection**: Shows which devices already exist in NetBox
+- **Interface Sync**: Import all interfaces with type mapping, LAG membership, and IP addresses
+- **POE Sync**: Sync POE mode and type (802.3af/at/bt) for switch interfaces
+
+### Virtual Chassis Support
+- **Stacked Switch Import**: Import switch stacks as NetBox Virtual Chassis
+- **Member Devices**: Creates one device per stack member (hostname.1, hostname.2, etc.)
+- **Interface Assignment**: Physical interfaces assigned to correct member by slot number
+- **Configurable**: Enable via `enable_virtual_chassis` setting (default: disabled)
 
 ### General Features
 - **Configurable Device Mappings**: Control which devices show the tab and lookup method
@@ -116,6 +124,10 @@ PLUGINS_CONFIG = {
         'timeout': 30,           # API timeout in seconds (default: 30)
         'cache_timeout': 60,     # Cache duration in seconds (default: 60)
         'verify_ssl': False,     # Verify SSL certificates (default: False)
+
+        # Virtual Chassis: Import stacked switches as virtual chassis (default: False)
+        # When enabled, stacks create one device per member with interfaces assigned by slot
+        'enable_virtual_chassis': False,
 
         # Device mappings (REQUIRED) - Controls which devices show the Catalyst Center tab
         # Each mapping specifies:
