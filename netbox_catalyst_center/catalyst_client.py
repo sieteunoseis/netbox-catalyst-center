@@ -216,9 +216,7 @@ class CatalystCenterClient:
             )
             client_info["connected_device_name"] = device.get("name")
             # Handle both API response formats: mgmtIp (wireless) and managementIpAddress (wired)
-            client_info["connected_device_ip"] = device.get("mgmtIp") or device.get(
-                "managementIpAddress"
-            )
+            client_info["connected_device_ip"] = device.get("mgmtIp") or device.get("managementIpAddress")
             client_info["connected_interface"] = device.get("interfaceName")
 
         # Cache the result
@@ -287,9 +285,7 @@ class CatalystCenterClient:
                     dnac_base = dnac_hostname.replace(".ohsu.edu", "")
                     if dnac_base == base_hostname or base_hostname in dnac_base:
                         result = {"response": [device]}
-                        logger.debug(
-                            f"Found device by local filter: {device.get('hostname')}"
-                        )
+                        logger.debug(f"Found device by local filter: {device.get('hostname')}")
                         break
 
         if not result or "error" in result:
@@ -305,9 +301,7 @@ class CatalystCenterClient:
             # If we searched by IP and got exactly one result, trust it
             if management_ip and len(response) == 1:
                 device_data = response[0]
-                logger.debug(
-                    f"Using single IP match result: {device_data.get('hostname')}"
-                )
+                logger.debug(f"Using single IP match result: {device_data.get('hostname')}")
             else:
                 # Look for exact hostname match (case-insensitive)
                 for device in response:
@@ -325,13 +319,9 @@ class CatalystCenterClient:
                         dnac_hostname = device.get("hostname", "").lower()
                         dnac_base = dnac_hostname.replace(".ohsu.edu", "")
                         # Match if DNAC hostname starts with our hostname or vice versa
-                        if dnac_base.startswith(
-                            base_hostname
-                        ) or base_hostname.startswith(dnac_base):
+                        if dnac_base.startswith(base_hostname) or base_hostname.startswith(dnac_base):
                             device_data = device
-                            logger.debug(
-                                f"Prefix hostname match: {device.get('hostname')}"
-                            )
+                            logger.debug(f"Prefix hostname match: {device.get('hostname')}")
                             break
 
         if not device_data:
@@ -344,11 +334,7 @@ class CatalystCenterClient:
             # Find similar hostnames to help troubleshoot
             similar_devices = []
             if all_devices:
-                search_prefix = (
-                    base_hostname[:3].lower()
-                    if len(base_hostname) >= 3
-                    else base_hostname.lower()
-                )
+                search_prefix = base_hostname[:3].lower() if len(base_hostname) >= 3 else base_hostname.lower()
                 for device in all_devices[:500]:  # Limit scan
                     dnac_hostname = device.get("hostname", "").lower()
                     if dnac_hostname.startswith(search_prefix):
@@ -387,25 +373,13 @@ class CatalystCenterClient:
             is_stack = True
             # Count stack members from serial numbers (most reliable)
             if "," in serial_raw:
-                stack_count = len(
-                    [s.strip() for s in serial_raw.split(",") if s.strip()]
-                )
+                stack_count = len([s.strip() for s in serial_raw.split(",") if s.strip()])
             elif "," in platform_raw:
-                stack_count = len(
-                    [p.strip() for p in platform_raw.split(",") if p.strip()]
-                )
+                stack_count = len([p.strip() for p in platform_raw.split(",") if p.strip()])
 
         # Build platform and serial lists for display
-        platform_list = (
-            [p.strip() for p in platform_raw.split(",") if p.strip()]
-            if platform_raw
-            else []
-        )
-        serial_list = (
-            [s.strip() for s in serial_raw.split(",") if s.strip()]
-            if serial_raw
-            else []
-        )
+        platform_list = [p.strip() for p in platform_raw.split(",") if p.strip()] if platform_raw else []
+        serial_list = [s.strip() for s in serial_raw.split(",") if s.strip()] if serial_raw else []
 
         device_info = {
             "is_network_device": True,
@@ -561,11 +535,7 @@ class CatalystCenterClient:
 
         if advisories_list:
             # API returns a single object with advisoryIds array
-            advisory_data = (
-                advisories_list[0]
-                if isinstance(advisories_list, list)
-                else advisories_list
-            )
+            advisory_data = advisories_list[0] if isinstance(advisories_list, list) else advisories_list
             advisory_info["advisory_ids"] = advisory_data.get("advisoryIds", [])
             advisory_info["advisory_count"] = len(advisory_info["advisory_ids"])
             advisory_info["hidden_count"] = advisory_data.get("hiddenAdvisoryCount", 0)
@@ -634,9 +604,7 @@ class CatalystCenterClient:
                 "is_l3_interface": iface.get("isL3Interface"),
                 "device_id": iface.get("deviceId"),
                 "mapped_physical_interface_id": iface.get("mappedPhysicalInterfaceId"),
-                "mapped_physical_interface_name": iface.get(
-                    "mappedPhysicalInterfaceName"
-                ),
+                "mapped_physical_interface_name": iface.get("mappedPhysicalInterfaceName"),
                 # POE fields (may not be present for non-POE ports)
                 "poe_enabled": iface.get("poeEnabled"),
                 "poe_status": iface.get("poeStatus"),
@@ -676,9 +644,7 @@ class CatalystCenterClient:
 
         # Check cache (shorter timeout for POE data since it changes more frequently)
         config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
-        cache_timeout = min(
-            config.get("cache_timeout", 60), 30
-        )  # Max 30 seconds for POE
+        cache_timeout = min(config.get("cache_timeout", 60), 30)  # Max 30 seconds for POE
         cache_key = f"catalyst_poe_{device_id}"
 
         cached = cache.get(cache_key)
@@ -699,14 +665,10 @@ class CatalystCenterClient:
         for poe in poe_list:
             poe_data = {
                 "interface_name": poe.get("interfaceName"),
-                "poe_oper_status": poe.get(
-                    "poeOperStatus"
-                ),  # e.g., "on", "off", "fault"
+                "poe_oper_status": poe.get("poeOperStatus"),  # e.g., "on", "off", "fault"
                 "allocated_power": poe.get("allocatedPower"),  # Watts allocated
                 "max_port_power": poe.get("maxPortPower"),  # Max port power in Watts
-                "port_power_drawn": poe.get(
-                    "portPowerDrawn"
-                ),  # Actual power drawn in Watts
+                "port_power_drawn": poe.get("portPowerDrawn"),  # Actual power drawn in Watts
                 "ieee_class": poe.get("ieeeClass"),  # e.g., "class0", "class4"
                 "pd_device_type": poe.get("pdDeviceType"),  # Connected PD device type
                 "pd_class": poe.get("pdClass"),  # PD class
@@ -759,25 +721,13 @@ class CatalystCenterClient:
         if not is_stack and ("," in platform_raw or "," in serial_raw):
             is_stack = True
             if "," in serial_raw:
-                stack_count = len(
-                    [s.strip() for s in serial_raw.split(",") if s.strip()]
-                )
+                stack_count = len([s.strip() for s in serial_raw.split(",") if s.strip()])
             elif "," in platform_raw:
-                stack_count = len(
-                    [p.strip() for p in platform_raw.split(",") if p.strip()]
-                )
+                stack_count = len([p.strip() for p in platform_raw.split(",") if p.strip()])
 
         # Build lists
-        platform_list = (
-            [p.strip() for p in platform_raw.split(",") if p.strip()]
-            if platform_raw
-            else []
-        )
-        serial_list = (
-            [s.strip() for s in serial_raw.split(",") if s.strip()]
-            if serial_raw
-            else []
-        )
+        platform_list = [p.strip() for p in platform_raw.split(",") if p.strip()] if platform_raw else []
+        serial_list = [s.strip() for s in serial_raw.split(",") if s.strip()] if serial_raw else []
 
         return is_stack, stack_count, serial_list, platform_list
 
@@ -805,9 +755,7 @@ class CatalystCenterClient:
                 # Try exact hostname match first
                 result = self._make_request(f"{endpoint}?hostname={search_value}")
             else:  # ip
-                result = self._make_request(
-                    f"{endpoint}?managementIpAddress={search_value}"
-                )
+                result = self._make_request(f"{endpoint}?managementIpAddress={search_value}")
 
             if "error" in result:
                 return result
@@ -815,9 +763,7 @@ class CatalystCenterClient:
             devices = result.get("response", [])
             matched_devices = []
             for device in devices:
-                is_stack, stack_count, serial_list, platform_list = self._detect_stack(
-                    device
-                )
+                is_stack, stack_count, serial_list, platform_list = self._detect_stack(device)
                 matched_devices.append(
                     {
                         "hostname": device.get("hostname"),
@@ -843,9 +789,7 @@ class CatalystCenterClient:
             return {
                 "devices": matched_devices,
                 "total_matched": len(matched_devices),
-                "total_in_dnac": len(
-                    matched_devices
-                ),  # We don't know total without fetching all
+                "total_in_dnac": len(matched_devices),  # We don't know total without fetching all
             }
 
         # For wildcard searches or MAC, we need to fetch and filter locally
@@ -876,9 +820,7 @@ class CatalystCenterClient:
             page_size = 500
 
             while True:
-                result = self._make_request(
-                    f"{endpoint}?limit={page_size}&offset={offset}"
-                )
+                result = self._make_request(f"{endpoint}?limit={page_size}&offset={offset}")
                 if "error" in result:
                     if all_devices:  # Return what we have if we got some
                         break
@@ -889,9 +831,7 @@ class CatalystCenterClient:
                     break
 
                 all_devices.extend(page_devices)
-                logger.debug(
-                    f"Fetched {len(page_devices)} devices, total so far: {len(all_devices)}"
-                )
+                logger.debug(f"Fetched {len(page_devices)} devices, total so far: {len(all_devices)}")
 
                 if len(page_devices) < page_size:
                     break  # Last page
@@ -927,15 +867,8 @@ class CatalystCenterClient:
             elif search_type == "mac":
                 mac = device.get("macAddress", "") or ""
                 # Normalize MAC format for comparison (remove separators)
-                mac_normalized = (
-                    mac.lower().replace(":", "").replace("-", "").replace(".", "")
-                )
-                search_normalized = (
-                    search_value.lower()
-                    .replace(":", "")
-                    .replace("-", "")
-                    .replace(".", "")
-                )
+                mac_normalized = mac.lower().replace(":", "").replace("-", "").replace(".", "")
+                search_normalized = search_value.lower().replace(":", "").replace("-", "").replace(".", "")
                 # Escape regex special chars, then convert wildcards
                 search_escaped = re.escape(search_normalized).replace(r"\*", ".*")
                 if not search_escaped.startswith(".*"):
@@ -950,9 +883,7 @@ class CatalystCenterClient:
                     pass
 
             if match:
-                is_stack, stack_count, serial_list, platform_list = self._detect_stack(
-                    device
-                )
+                is_stack, stack_count, serial_list, platform_list = self._detect_stack(device)
                 matched_devices.append(
                     {
                         "hostname": device.get("hostname"),
