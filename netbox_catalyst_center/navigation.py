@@ -15,6 +15,11 @@ menu = PluginMenu(
                     link_text="Import Devices",
                     permissions=["dcim.add_device"],
                 ),
+                PluginMenuItem(
+                    link="plugins:netbox_catalyst_center:comparison",
+                    link_text="Inventory Comparison",
+                    permissions=["dcim.view_device"],
+                ),
             ),
         ),
         (

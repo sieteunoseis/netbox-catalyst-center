@@ -1,0 +1,200 @@
+{% extends 'generic/object.html' %}
+
+{% block title %}Inventory Comparison{% endblock %}
+
+{% block header %}
+<h1 class="ps-3 pt-2"><i class="mdi mdi-compare"></i> Inventory Comparison</h1>
+{% endblock %}
+
+{% block content %}
+{% if comparison.error %}
+<div class="alert alert-warning">
+    <i class="mdi mdi-alert"></i> {{ comparison.error }}
+</div>
+{% endif %}
+
+<!-- Side-by-side Stats -->
+<div class="row mb-4">
+    <!-- Catalyst Center Stats -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header bg-primary text-white">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-server-network"></i> Catalyst Center
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center mb-3">
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.cc_devices|default:0 }}</h2>
+                        <small class="text-muted">Devices</small>
+                    </div>
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.cc_interfaces|default:0 }}</h2>
+                        <small class="text-muted">Interfaces</small>
+                    </div>
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.cc_sites|default:0 }}</h2>
+                        <small class="text-muted">Sites</small>
+                    </div>
+                    <div class="col-3">
+                        <h2 class="mb-0 {% if comparison.cc_health_score >= 80 %}text-success{% elif comparison.cc_health_score >= 50 %}text-warning{% else %}text-danger{% endif %}">{{ comparison.cc_health_score|default:0 }}%</h2>
+                        <small class="text-muted">Health</small>
+                    </div>
+                </div>
+                <hr>
+                <div class="row text-center">
+                    <div class="col">
+                        <h4 class="mb-0">{{ comparison.cc_switches|default:0 }}</h4>
+                        <small class="text-muted">Switches</small>
+                    </div>
+                    <div class="col">
+                        <h4 class="mb-0">{{ comparison.cc_routers|default:0 }}</h4>
+                        <small class="text-muted">Routers</small>
+                    </div>
+                    <div class="col">
+                        <h4 class="mb-0">{{ comparison.cc_aps|default:0 }}</h4>
+                        <small class="text-muted">APs</small>
+                    </div>
+                    <div class="col">
+                        <h4 class="mb-0">{{ comparison.cc_other|default:0 }}</h4>
+                        <small class="text-muted">Other</small>
+                    </div>
+                </div>
+                <hr>
+                <small class="text-muted d-block mb-2">Device Health Status</small>
+                <div class="row text-center">
+                    <div class="col">
+                        <span class="badge bg-success text-white fs-4 px-3 py-2">{{ comparison.cc_health_good|default:0 }}</span>
+                        <div class="small text-muted mt-1">Good</div>
+                    </div>
+                    <div class="col">
+                        <span class="badge text-white fs-4 px-3 py-2" style="background-color: #e67e22;">{{ comparison.cc_health_fair|default:0 }}</span>
+                        <div class="small text-muted mt-1">Fair</div>
+                    </div>
+                    <div class="col">
+                        <span class="badge bg-danger text-white fs-4 px-3 py-2">{{ comparison.cc_health_bad|default:0 }}</span>
+                        <div class="small text-muted mt-1">Bad</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NetBox Stats -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header bg-dark text-white">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-database"></i> NetBox
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center mb-3">
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.nb_devices|default:0 }}</h2>
+                        <small class="text-muted">Devices</small>
+                    </div>
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.nb_interfaces|default:0 }}</h2>
+                        <small class="text-muted">Interfaces</small>
+                    </div>
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.nb_sites|default:0 }}</h2>
+                        <small class="text-muted">Sites</small>
+                    </div>
+                    <div class="col-3">
+                        <h2 class="mb-0">{{ comparison.nb_ips|default:0 }}</h2>
+                        <small class="text-muted">IPs</small>
+                    </div>
+                </div>
+                <hr>
+                <div class="row text-center">
+                    <div class="col-6">
+                        <h4 class="mb-0">{{ comparison.nb_cisco_devices|default:0 }}</h4>
+                        <small class="text-muted">Cisco Devices</small>
+                    </div>
+                    <div class="col-6">
+                        <h4 class="mb-0">{{ comparison.nb_cisco_interfaces|default:0 }}</h4>
+                        <small class="text-muted">Cisco Interfaces</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Inventory Size Comparison -->
+<div class="card mb-4">
+    <div class="card-header bg-secondary text-white">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-chart-bar"></i> Inventory Size Comparison
+            <small class="ms-2 opacity-75">(counts only, not matched)</small>
+        </h5>
+    </div>
+    <div class="card-body">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th style="width: 150px;"></th>
+                    <th class="text-end" style="width: 140px;">NetBox</th>
+                    <th class="text-end" style="width: 140px;">Catalyst Center</th>
+                    <th>Ratio</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Devices</strong></td>
+                    <td class="text-end fs-5">{{ comparison.nb_devices|default:0 }}</td>
+                    <td class="text-end fs-5">{{ comparison.cc_devices|default:0 }}</td>
+                    <td>
+                        {% widthratio comparison.nb_devices comparison.cc_devices 100 as device_pct %}
+                        <div class="d-flex align-items-center">
+                            <div class="progress flex-grow-1" style="height: 20px;">
+                                <div class="progress-bar bg-success" role="progressbar" style="width: {% if device_pct > 100 %}100{% else %}{{ device_pct|default:0 }}{% endif %}%"></div>
+                            </div>
+                            <span class="ms-2 fw-bold text-white" style="min-width: 50px;">{{ device_pct|default:0 }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>Interfaces</strong></td>
+                    <td class="text-end fs-5">{{ comparison.nb_interfaces|default:0 }}</td>
+                    <td class="text-end fs-5">{{ comparison.cc_interfaces|default:0 }}</td>
+                    <td>
+                        {% widthratio comparison.nb_interfaces comparison.cc_interfaces 100 as intf_pct %}
+                        <div class="d-flex align-items-center">
+                            <div class="progress flex-grow-1" style="height: 20px;">
+                                <div class="progress-bar bg-info" role="progressbar" style="width: {% if intf_pct > 100 %}100{% else %}{{ intf_pct|default:0 }}{% endif %}%"></div>
+                            </div>
+                            <span class="ms-2 fw-bold text-white" style="min-width: 50px;">{{ intf_pct|default:0 }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>Sites</strong></td>
+                    <td class="text-end fs-5">{{ comparison.nb_sites|default:0 }}</td>
+                    <td class="text-end fs-5">{{ comparison.cc_sites|default:0 }}</td>
+                    <td>
+                        {% widthratio comparison.nb_sites comparison.cc_sites 100 as site_pct %}
+                        <div class="d-flex align-items-center">
+                            <div class="progress flex-grow-1" style="height: 20px;">
+                                <div class="progress-bar bg-warning" role="progressbar" style="width: {% if site_pct > 100 %}100{% else %}{{ site_pct|default:0 }}{% endif %}%"></div>
+                            </div>
+                            <span class="ms-2 fw-bold text-white" style="min-width: 50px;">{{ site_pct|default:0 }}%</span>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Timestamp -->
+<p class="text-muted small">
+    <i class="mdi mdi-clock-outline"></i>
+    Last updated: {{ comparison.last_updated|date:"Y-m-d H:i:s" }}
+    <a href="" class="ms-2"><i class="mdi mdi-refresh"></i> Refresh</a>
+</p>
+
+{% endblock %}

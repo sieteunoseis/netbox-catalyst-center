@@ -2324,3 +2324,113 @@ class ImportDevicesView(View):
                 "results": results,
             }
         )
+
+
+class InventoryComparisonView(View):
+    """
+    Dashboard view comparing NetBox inventory with Catalyst Center inventory.
+
+    Shows:
+    - Devices in CC but not in NetBox (missing from NetBox)
+    - Devices in NetBox but not in CC (missing from CC)
+    - Devices in both with data mismatches (serial, IP, etc.)
+    """
+
+    template_name = "netbox_catalyst_center/comparison.html"
+
+    def get(self, request):
+        """Display the inventory comparison dashboard with stats only."""
+        from dcim.models import Device, Interface, Site, Manufacturer
+        from ipam.models import IPAddress
+        from django.utils import timezone
+
+        client = get_client()
+
+        # Initialize results - counts only, no device lists
+        comparison = {
+            "last_updated": timezone.now(),
+            "error": None,
+            # CC stats
+            "cc_devices": 0,
+            "cc_switches": 0,
+            "cc_routers": 0,
+            "cc_aps": 0,
+            "cc_other": 0,
+            "cc_interfaces": 0,
+            "cc_sites": 0,
+            "cc_health_score": 0,
+            "cc_health_good": 0,
+            "cc_health_fair": 0,
+            "cc_health_bad": 0,
+            # NetBox stats
+            "nb_devices": 0,
+            "nb_cisco_devices": 0,
+            "nb_interfaces": 0,
+            "nb_cisco_interfaces": 0,
+            "nb_sites": 0,
+            "nb_ips": 0,
+        }
+
+        # Get NetBox stats (fast Django ORM counts)
+        cisco_manufacturers = Manufacturer.objects.filter(
+            slug__icontains="cisco"
+        ) | Manufacturer.objects.filter(name__icontains="cisco")
+
+        comparison["nb_devices"] = Device.objects.count()
+        comparison["nb_cisco_devices"] = Device.objects.filter(
+            device_type__manufacturer__in=cisco_manufacturers
+        ).count()
+        comparison["nb_interfaces"] = Interface.objects.count()
+        comparison["nb_cisco_interfaces"] = Interface.objects.filter(
+            device__device_type__manufacturer__in=cisco_manufacturers
+        ).count()
+        comparison["nb_sites"] = Site.objects.count()
+        comparison["nb_ips"] = IPAddress.objects.count()
+
+        if not client:
+            comparison["error"] = "Catalyst Center not configured"
+            return render(request, self.template_name, {"comparison": comparison})
+
+        # Fetch Catalyst Center stats (fast count endpoints only)
+        try:
+            # Device counts
+            comparison["cc_devices"] = client._make_request(
+                "/dna/intent/api/v1/network-device/count"
+            ).get("response", 0)
+            comparison["cc_switches"] = client._make_request(
+                "/dna/intent/api/v1/network-device/count?family=Switches and Hubs"
+            ).get("response", 0)
+            comparison["cc_routers"] = client._make_request(
+                "/dna/intent/api/v1/network-device/count?family=Routers"
+            ).get("response", 0)
+            comparison["cc_aps"] = client._make_request(
+                "/dna/intent/api/v1/network-device/count?family=Unified AP"
+            ).get("response", 0)
+            comparison["cc_other"] = (
+                comparison["cc_devices"]
+                - comparison["cc_switches"]
+                - comparison["cc_routers"]
+                - comparison["cc_aps"]
+            )
+
+            # Interface and site counts
+            comparison["cc_interfaces"] = client._make_request(
+                "/dna/intent/api/v1/interface/count"
+            ).get("response", 0)
+            comparison["cc_sites"] = client._make_request(
+                "/dna/intent/api/v1/site/count"
+            ).get("response", 0)
+
+            # Network health
+            health_result = client._make_request("/dna/intent/api/v1/network-health")
+            if "response" in health_result and health_result["response"]:
+                health_data = health_result["response"][0]
+                comparison["cc_health_score"] = health_data.get("healthScore", 0)
+                comparison["cc_health_good"] = int(health_data.get("goodCount", 0))
+                comparison["cc_health_fair"] = int(health_data.get("fairCount", 0))
+                comparison["cc_health_bad"] = int(health_data.get("badCount", 0))
+
+        except Exception as e:
+            comparison["error"] = f"Failed to fetch from Catalyst Center: {e}"
+
+        return render(request, self.template_name, {"comparison": comparison})
