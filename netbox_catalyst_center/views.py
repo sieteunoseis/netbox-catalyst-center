@@ -1811,7 +1811,10 @@ def _import_as_virtual_chassis(
                     virtual_chassis=vc,
                     vc_position=member_num,
                     vc_priority=(255 if member_num == 1 else 128),  # Master gets highest priority
-                    comments=f"Imported from Catalyst Center (Virtual Chassis member {member_num})\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
+                    comments=(
+                        f"Imported from Catalyst Center (Virtual Chassis member {member_num})\n"
+                        f"SNMP Location: {dnac_device.get('snmp_location', 'N/A')}"
+                    ),
                 )
                 member_device.save()
 
@@ -1958,7 +1961,6 @@ class ImportDevicesView(View):
             Manufacturer,
             Platform,
             Site,
-            VirtualChassis,
         )
 
         try:
