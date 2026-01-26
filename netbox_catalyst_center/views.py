@@ -283,6 +283,17 @@ class DeviceCatalystCenterView(generic.ObjectView):
                     "Configure device_mappings in the plugin settings to enable lookups."
                 )
 
+        # For VC members, extract the member-specific serial for sync comparison
+        if client_data and client_data.get("serial_number") and device.virtual_chassis and device.vc_position:
+            serial_list = [s.strip() for s in client_data["serial_number"].split(",") if s.strip()]
+            if device.vc_position <= len(serial_list):
+                client_data["sync_serial_number"] = serial_list[device.vc_position - 1]
+            else:
+                client_data["sync_serial_number"] = client_data["serial_number"]
+        elif client_data and client_data.get("serial_number"):
+            # Non-VC device uses full serial
+            client_data["sync_serial_number"] = client_data["serial_number"]
+
         # Get Catalyst Center URL for external links
         catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
 
