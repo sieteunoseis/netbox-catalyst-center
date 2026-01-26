@@ -2340,9 +2340,9 @@ class InventoryComparisonView(View):
 
     def get(self, request):
         """Display the inventory comparison dashboard with stats only."""
-        from dcim.models import Device, Interface, Site, Manufacturer
-        from ipam.models import IPAddress
+        from dcim.models import Device, Interface, Manufacturer, Site
         from django.utils import timezone
+        from ipam.models import IPAddress
 
         client = get_client()
 
@@ -2372,9 +2372,9 @@ class InventoryComparisonView(View):
         }
 
         # Get NetBox stats (fast Django ORM counts)
-        cisco_manufacturers = Manufacturer.objects.filter(
-            slug__icontains="cisco"
-        ) | Manufacturer.objects.filter(name__icontains="cisco")
+        cisco_manufacturers = Manufacturer.objects.filter(slug__icontains="cisco") | Manufacturer.objects.filter(
+            name__icontains="cisco"
+        )
 
         comparison["nb_devices"] = Device.objects.count()
         comparison["nb_cisco_devices"] = Device.objects.filter(
@@ -2394,9 +2394,9 @@ class InventoryComparisonView(View):
         # Fetch Catalyst Center stats (fast count endpoints only)
         try:
             # Device counts
-            comparison["cc_devices"] = client._make_request(
-                "/dna/intent/api/v1/network-device/count"
-            ).get("response", 0)
+            comparison["cc_devices"] = client._make_request("/dna/intent/api/v1/network-device/count").get(
+                "response", 0
+            )
             comparison["cc_switches"] = client._make_request(
                 "/dna/intent/api/v1/network-device/count?family=Switches and Hubs"
             ).get("response", 0)
@@ -2407,19 +2407,12 @@ class InventoryComparisonView(View):
                 "/dna/intent/api/v1/network-device/count?family=Unified AP"
             ).get("response", 0)
             comparison["cc_other"] = (
-                comparison["cc_devices"]
-                - comparison["cc_switches"]
-                - comparison["cc_routers"]
-                - comparison["cc_aps"]
+                comparison["cc_devices"] - comparison["cc_switches"] - comparison["cc_routers"] - comparison["cc_aps"]
             )
 
             # Interface and site counts
-            comparison["cc_interfaces"] = client._make_request(
-                "/dna/intent/api/v1/interface/count"
-            ).get("response", 0)
-            comparison["cc_sites"] = client._make_request(
-                "/dna/intent/api/v1/site/count"
-            ).get("response", 0)
+            comparison["cc_interfaces"] = client._make_request("/dna/intent/api/v1/interface/count").get("response", 0)
+            comparison["cc_sites"] = client._make_request("/dna/intent/api/v1/site/count").get("response", 0)
 
             # Network health
             health_result = client._make_request("/dna/intent/api/v1/network-health")
