@@ -5,22 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.3] - 2025-01-23
-
-### Fixed
-
-- Code formatting fixes for CI compliance
-
-## [1.2.2] - 2025-01-23
-
-### Changed
-
-- Optimized database queries with `select_related()` and `prefetch_related()` for better performance
-
 ## [Unreleased]
+
+## [1.3.0] - 2026-01-26
 
 ### Added
 
+- **Virtual Chassis Import for Stacked Switches** (PR #5)
+  - Import stacked switches as NetBox Virtual Chassis with separate member devices
+  - Creates one device per stack member (hostname.1, hostname.2, etc.)
+  - Assigns physical interfaces to correct member based on slot number (e.g., 2/0/1 → member 2)
+  - Assigns logical interfaces (VLANs, Loopbacks, Port-channels) to master device
+  - Shows "Stack (N)" badge in search results for stacked devices
+  - Virtual Chassis link displayed in import results
+  - Configurable via `enable_virtual_chassis` setting (default: disabled)
 - **Interface Sync from Catalyst Center** (GitHub Issue #1)
   - Sync network interfaces from Catalyst Center to NetBox
   - Creates new interfaces if they don't exist, updates existing ones
@@ -41,11 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Creates journal entry with POE data after sync
   - **POE sync during import**: Automatically syncs POE data after interfaces are created during device import
   - **Import results show POE count**: Displays blue POE badge alongside interface count
-- **Stack/Virtual Chassis Detection**
-  - Detects stacked switches via `lineCardCount` or comma-separated serial/platform values
-  - Shows "Stack (N)" badge on Catalyst Center tab for stacked devices
-  - Displays per-member serial numbers and platforms for stacks
-  - Deduplicates platform IDs (e.g., "C9300-48P, C9300-48P" → "C9300-48P")
 
 ### Changed
 
@@ -56,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sync UI now shows current NetBox value vs new CC value with visual comparison
 - Sync UI highlights already-synced fields with green background and checkmark
 - Sync checkboxes auto-unchecked when values already match
+- **Virtual Chassis members use chassis name for Catalyst Center lookups** (hostname without member suffix)
+- Serial number sync now shows member-specific serial for Virtual Chassis members
 
 ### Fixed
 
@@ -65,6 +60,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed interface type mapping priority**: Name-based detection now runs BEFORE speed-based detection
   - Prevents FortyGigabitEthernet/TenGigabitEthernet ports from being classified as 10base-t when CC reports low negotiated speed (e.g., disconnected ports)
   - Interface names are now definitive: FortyGigabitEthernet → 40gbase-x-qsfpp, TenGigabitEthernet → 10gbase-x-sfpp, etc.
+- **Bluetooth interfaces now mapped to IEEE 802.15.1** instead of "Other" (Fixes #6)
+- **Fixed Virtual Chassis member_count** not updating correctly during import
+- **Fixed interface assignment for VC members**: Interfaces, serials, and POE data now correctly filter by member position
+- Expanded logical interface prefix detection (stackport, stacksub, cpu, etc.)
+
+## [1.2.3] - 2025-01-23
+
+### Fixed
+
+- Code formatting fixes for CI compliance
+
+## [1.2.2] - 2025-01-23
+
+### Changed
+
+- Optimized database queries with `select_related()` and `prefetch_related()` for better performance
 
 ## [1.2.0] - 2025-01-22
 
@@ -160,7 +171,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10+ required
 - Apache 2.0 license
 
-[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.3...v1.3.0
+[1.2.3]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.1...v1.2.2
 [1.2.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.0.1...v1.1.0

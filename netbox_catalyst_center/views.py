@@ -149,11 +149,34 @@ def parse_interface_stack_member(interface_name):
     if not interface_name:
         return None
 
-    # Logical interfaces go to master (return None)
+    # Logical/shared interfaces go to master (return None)
+    # These are interfaces that don't belong to a specific stack member
     logical_prefixes = (
-        "vlan", "loopback", "tunnel", "port-channel", "po",
-        "nve", "bdi", "null", "mgmt", "management",
+        "vlan",
+        "loopback",
+        "tunnel",
+        "port-channel",
+        "po",
+        "nve",
+        "bdi",
+        "null",
+        "mgmt",
+        "management",
         "appgigabitethernet",  # App interfaces on controllers
+        "stackport",  # Stack interconnect ports
+        "stacksub",  # Stack sub-interfaces
+        "cpu",  # CPU interfaces
+        "ucse",  # UCS-E interfaces
+        "embedded",  # Embedded service interfaces
+        "internal",  # Internal interfaces
+        "service",  # Service interfaces
+        "async",  # Async interfaces
+        "virtual",  # Virtual interfaces
+        "pseudowire",  # Pseudowire interfaces
+        "bvi",  # Bridge Virtual Interface
+        "dialer",  # Dialer interfaces
+        "virtual-access",  # Virtual access interfaces
+        "virtual-template",  # Virtual template interfaces
     )
     iface_lower = interface_name.lower()
     if any(iface_lower.startswith(prefix) for prefix in logical_prefixes):
@@ -170,6 +193,8 @@ def parse_interface_stack_member(interface_name):
     if match:
         return int(match.group(1))
 
+    # If we can't parse the stack member, return None (goes to master as logical)
+    # This is safer than guessing for unparseable interface names
     return None
 
 
@@ -222,7 +247,9 @@ class DeviceCatalystCenterView(generic.ObjectView):
                 elif device.primary_ip6:
                     management_ip = str(device.primary_ip6.address.ip)
 
-                client_data = client.get_network_device(device.name, management_ip=management_ip)
+                # Use VC name for virtual chassis members (original hostname)
+                lookup_hostname = device.virtual_chassis.name if device.virtual_chassis else device.name
+                client_data = client.get_network_device(lookup_hostname, management_ip=management_ip)
                 if "error" in client_data:
                     error = client_data.get("error")
                     client_data = {}
@@ -255,6 +282,17 @@ class DeviceCatalystCenterView(generic.ObjectView):
                     "This device doesn't match any configured device_mappings. "
                     "Configure device_mappings in the plugin settings to enable lookups."
                 )
+
+        # For VC members, extract the member-specific serial for sync comparison
+        if client_data and client_data.get("serial_number") and device.virtual_chassis and device.vc_position:
+            serial_list = [s.strip() for s in client_data["serial_number"].split(",") if s.strip()]
+            if device.vc_position <= len(serial_list):
+                client_data["sync_serial_number"] = serial_list[device.vc_position - 1]
+            else:
+                client_data["sync_serial_number"] = client_data["serial_number"]
+        elif client_data and client_data.get("serial_number"):
+            # Non-VC device uses full serial
+            client_data["sync_serial_number"] = client_data["serial_number"]
 
         # Get Catalyst Center URL for external links
         catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
@@ -385,7 +423,12 @@ class SyncDeviceFromDNACView(View):
             return self._do_sync(request, device)
         except Exception as e:
             return JsonResponse(
-                {"success": False, "error": f"Sync failed: {str(e)}", "traceback": traceback.format_exc()}, status=500
+                {
+                    "success": False,
+                    "error": f"Sync failed: {str(e)}",
+                    "traceback": traceback.format_exc(),
+                },
+                status=500,
             )
 
     def _do_sync(self, request, device):
@@ -413,7 +456,10 @@ class SyncDeviceFromDNACView(View):
 
         client = get_client()
         if not client:
-            return JsonResponse({"success": False, "error": "Catalyst Center not configured"}, status=400)
+            return JsonResponse(
+                {"success": False, "error": "Catalyst Center not configured"},
+                status=400,
+            )
 
         # Get device data from DNAC
         lookup_method, _ = get_device_lookup_method(device)
@@ -426,7 +472,9 @@ class SyncDeviceFromDNACView(View):
             elif device.primary_ip6:
                 management_ip = str(device.primary_ip6.address.ip)
 
-            dnac_data = client.get_network_device(device.name, management_ip=management_ip)
+            # Use VC name for virtual chassis members (original hostname)
+            lookup_hostname = device.virtual_chassis.name if device.virtual_chassis else device.name
+            dnac_data = client.get_network_device(lookup_hostname, management_ip=management_ip)
         elif lookup_method == "client":
             mac_address = get_device_mac(device)
             if mac_address:
@@ -434,7 +482,10 @@ class SyncDeviceFromDNACView(View):
             else:
                 return JsonResponse({"success": False, "error": "No MAC address found"}, status=400)
         else:
-            return JsonResponse({"success": False, "error": "Device not configured for DNAC lookup"}, status=400)
+            return JsonResponse(
+                {"success": False, "error": "Device not configured for DNAC lookup"},
+                status=400,
+            )
 
         if "error" in dnac_data:
             return JsonResponse({"success": False, "error": dnac_data["error"]}, status=400)
@@ -456,10 +507,22 @@ class SyncDeviceFromDNACView(View):
         # Sync serial number
         if sync_serial:
             dnac_serial = dnac_data.get("serial_number")
-            if dnac_serial and device.serial != dnac_serial:
-                device.serial = dnac_serial
-                changes.append(f"Serial: {dnac_serial}")
-                device_changed = True
+            if dnac_serial:
+                # For VC members, extract the serial for this specific member
+                if device.virtual_chassis and device.vc_position:
+                    serial_list = [s.strip() for s in dnac_serial.split(",") if s.strip()]
+                    member_serial = (
+                        serial_list[device.vc_position - 1] if device.vc_position <= len(serial_list) else ""
+                    )
+                    if member_serial and device.serial != member_serial:
+                        device.serial = member_serial
+                        changes.append(f"Serial: {member_serial}")
+                        device_changed = True
+                elif device.serial != dnac_serial:
+                    # Non-VC device - use full serial (may be comma-separated for stacks)
+                    device.serial = dnac_serial
+                    changes.append(f"Serial: {dnac_serial}")
+                    device_changed = True
 
         # Sync SNMP location to comments
         if sync_location:
@@ -587,11 +650,19 @@ class SyncDeviceFromDNACView(View):
 
         if not changes:
             return JsonResponse(
-                {"success": True, "message": "No changes needed - device is already in sync", "changes": []}
+                {
+                    "success": True,
+                    "message": "No changes needed - device is already in sync",
+                    "changes": [],
+                }
             )
 
         return JsonResponse(
-            {"success": True, "message": f"Synced {len(changes)} field(s) from Catalyst Center", "changes": changes}
+            {
+                "success": True,
+                "message": f"Synced {len(changes)} field(s) from Catalyst Center",
+                "changes": changes,
+            }
         )
 
     def _sync_custom_fields(self, device, dnac_data, sync_id=True, sync_series=True, sync_role=True):
@@ -697,6 +768,22 @@ class SyncDeviceFromDNACView(View):
         if not cc_interfaces:
             changes.append("Interfaces: none found in CC")
             return {"changes": changes}
+
+        # For VC members, filter interfaces to only those belonging to this member
+        if device.virtual_chassis and device.vc_position:
+            member_num = device.vc_position
+            is_master = device.virtual_chassis.master == device
+            filtered_interfaces = []
+            for iface in cc_interfaces:
+                iface_name = iface.get("name", "")
+                slot_num = parse_interface_stack_member(iface_name)
+                if slot_num == member_num:
+                    # Physical interface belongs to this member
+                    filtered_interfaces.append(iface)
+                elif slot_num is None and is_master:
+                    # Logical interface (VLAN, Loopback, Port-channel) - assign to master only
+                    filtered_interfaces.append(iface)
+            cc_interfaces = filtered_interfaces
 
         # Get existing interfaces on device
         existing_interfaces = {iface.name: iface for iface in device.interfaces.all()}
@@ -1182,6 +1269,10 @@ class SyncDeviceFromDNACView(View):
         if name.startswith("nve"):
             return "virtual"
 
+        # Bluetooth interfaces (IEEE 802.15.1)
+        if name.startswith("bluetooth"):
+            return "ieee802.15.1"
+
         # Name-based detection FIRST (interface names are definitive)
         # Extract the interface type prefix before any numbers
         name_prefix = re.sub(r"\d.*", "", name)  # Remove from first digit onwards
@@ -1361,6 +1452,17 @@ class SyncDeviceFromDNACView(View):
         if not poe_interfaces:
             changes.append("POE: no POE ports found")
             return {"changes": changes}
+
+        # For VC members, filter POE interfaces to only those belonging to this member
+        if device.virtual_chassis and device.vc_position:
+            member_num = device.vc_position
+            filtered_poe = []
+            for poe_data in poe_interfaces:
+                iface_name = poe_data.get("interface_name", "")
+                slot_num = parse_interface_stack_member(iface_name)
+                if slot_num == member_num:
+                    filtered_poe.append(poe_data)
+            poe_interfaces = filtered_poe
 
         # Get existing interfaces on device by name
         existing_interfaces = {iface.name: iface for iface in device.interfaces.all()}
@@ -1663,6 +1765,7 @@ def _import_as_virtual_chassis(
             - error: Error message if failed
     """
     from dcim.models import Device, Interface, VirtualChassis
+    from django.db import transaction
     from django.utils import timezone
 
     from .catalyst_client import get_client
@@ -1680,96 +1783,97 @@ def _import_as_virtual_chassis(
     master_device = None
 
     try:
-        # Create Virtual Chassis first (using hostname as the name)
-        vc = VirtualChassis(
-            name=hostname_base,
-        )
-        vc.save()
-
-        # Create member devices
-        for member_num in range(1, stack_count + 1):
-            member_name = f"{hostname_base}.{member_num}"
-            member_serial = serial_list[member_num - 1] if member_num <= len(serial_list) else ""
-
-            # Check if this member already exists
-            existing = Device.objects.filter(name__iexact=member_name).first()
-            if existing:
-                continue
-
-            member_device = Device(
-                name=member_name,
-                device_type=device_type,
-                role=role,
-                site=default_site,
-                serial=member_serial,
-                status="active",
-                platform=device_platform,
-                virtual_chassis=vc,
-                vc_position=member_num,
-                vc_priority=255 if member_num == 1 else 128,  # Master gets highest priority
-                comments=f"Imported from Catalyst Center (Virtual Chassis member {member_num})\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
+        with transaction.atomic():
+            # Create Virtual Chassis first (using hostname as the name)
+            vc = VirtualChassis(
+                name=hostname_base,
             )
-            member_device.save()
+            vc.save()
 
-            # Populate custom fields
-            member_device.custom_field_data["cc_device_id"] = device_id
-            member_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
-            member_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
-            member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
-            member_device.save()
+            # Create member devices
+            for member_num in range(1, stack_count + 1):
+                member_name = f"{hostname_base}.{member_num}"
+                member_serial = serial_list[member_num - 1] if member_num <= len(serial_list) else ""
 
-            created_members.append({
-                "name": member_name,
-                "netbox_id": member_device.pk,
-                "serial": member_serial,
-                "vc_position": member_num,
-            })
+                # Check if this member already exists
+                existing = Device.objects.filter(name__iexact=member_name).first()
+                if existing:
+                    continue
 
-            # First member is the master
-            if member_num == 1:
-                master_device = member_device
-
-        if not master_device:
-            return {
-                "success": False,
-                "error": "Failed to create master device",
-            }
-
-        # Set master on the virtual chassis
-        vc.master = master_device
-        vc.save()
-
-        # Create management interface on master device
-        mgmt_interface = Interface(
-            device=master_device,
-            name="Management",
-            type="other",
-        )
-        mgmt_interface.save()
-
-        # Create IP address on master if available
-        if management_ip:
-            from ipam.models import IPAddress
-
-            ip_with_prefix = f"{management_ip}/32"
-            existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
-
-            if existing_ip:
-                existing_ip.assigned_object = mgmt_interface
-                existing_ip.save()
-                master_device.primary_ip4 = existing_ip
-            else:
-                new_ip = IPAddress(
-                    address=ip_with_prefix,
-                    assigned_object=mgmt_interface,
-                    description="Management IP from Catalyst Center",
+                member_device = Device(
+                    name=member_name,
+                    device_type=device_type,
+                    role=role,
+                    site=default_site,
+                    serial=member_serial,
+                    status="active",
+                    platform=device_platform,
+                    virtual_chassis=vc,
+                    vc_position=member_num,
+                    vc_priority=(255 if member_num == 1 else 128),  # Master gets highest priority
+                    comments=f"Imported from Catalyst Center (Virtual Chassis member {member_num})\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
                 )
-                new_ip.save()
-                master_device.primary_ip4 = new_ip
+                member_device.save()
 
-            master_device.save()
+                # Populate custom fields
+                member_device.custom_field_data["cc_device_id"] = device_id
+                member_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
+                member_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
+                member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+                member_device.save()
 
-        # Sync interfaces if requested
+                created_members.append(
+                    {
+                        "name": member_name,
+                        "netbox_id": member_device.pk,
+                        "serial": member_serial,
+                        "vc_position": member_num,
+                    }
+                )
+
+                # First member is the master
+                if member_num == 1:
+                    master_device = member_device
+
+            if not master_device:
+                raise ValueError("Failed to create master device")
+
+            # Set master on the virtual chassis and update member count
+            vc.master = master_device
+            vc.member_count = len(created_members)
+            vc.save()
+
+            # Create management interface on master device
+            mgmt_interface = Interface(
+                device=master_device,
+                name="Management",
+                type="other",
+            )
+            mgmt_interface.save()
+
+            # Create IP address on master if available
+            if management_ip:
+                from ipam.models import IPAddress
+
+                ip_with_prefix = f"{management_ip}/32"
+                existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
+
+                if existing_ip:
+                    existing_ip.assigned_object = mgmt_interface
+                    existing_ip.save()
+                    master_device.primary_ip4 = existing_ip
+                else:
+                    new_ip = IPAddress(
+                        address=ip_with_prefix,
+                        assigned_object=mgmt_interface,
+                        description="Management IP from Catalyst Center",
+                    )
+                    new_ip.save()
+                    master_device.primary_ip4 = new_ip
+
+                master_device.save()
+
+        # Sync interfaces if requested (outside transaction - external API call)
         interface_count = 0
         poe_count = 0
         if sync_interfaces and device_id:
@@ -1777,10 +1881,7 @@ def _import_as_virtual_chassis(
             if client:
                 try:
                     # Build a device lookup for each member by position
-                    member_devices = {
-                        d.vc_position: d
-                        for d in Device.objects.filter(virtual_chassis=vc)
-                    }
+                    member_devices = {d.vc_position: d for d in Device.objects.filter(virtual_chassis=vc)}
 
                     sync_view = SyncDeviceFromDNACView()
                     iface_result = sync_view._sync_interfaces_virtual_chassis(
@@ -1815,6 +1916,7 @@ def _import_as_virtual_chassis(
 
                 except Exception as e:
                     import logging
+
                     logging.getLogger(__name__).warning(
                         f"Failed to sync interfaces for virtual chassis {hostname_base}: {e}"
                     )
@@ -1822,6 +1924,7 @@ def _import_as_virtual_chassis(
         return {
             "success": True,
             "chassis_name": hostname_base,
+            "virtual_chassis_id": vc.pk,
             "members": created_members,
             "interface_count": interface_count,
             "poe_count": poe_count,
@@ -1848,7 +1951,15 @@ class ImportDevicesView(View):
         """
         import json
 
-        from dcim.models import DeviceRole, DeviceType, Interface, Manufacturer, Platform, Site, VirtualChassis
+        from dcim.models import (
+            DeviceRole,
+            DeviceType,
+            Interface,
+            Manufacturer,
+            Platform,
+            Site,
+            VirtualChassis,
+        )
 
         try:
             body = json.loads(request.body) if request.body else {}
@@ -2056,22 +2167,27 @@ class ImportDevicesView(View):
                     )
 
                     if vc_result.get("success"):
-                        results["created"].append({
-                            "hostname": hostname_base,
-                            "netbox_id": vc_result["members"][0]["netbox_id"] if vc_result["members"] else None,
-                            "device_type": device_type.model,
-                            "ip": management_ip,
-                            "platform": f"{software_type}/{software_version}" if software_type else None,
-                            "interface_count": vc_result.get("interface_count", 0),
-                            "poe_count": vc_result.get("poe_count", 0),
-                            "virtual_chassis": True,
-                            "member_count": len(vc_result.get("members", [])),
-                        })
+                        results["created"].append(
+                            {
+                                "hostname": hostname_base,
+                                "netbox_id": (vc_result["members"][0]["netbox_id"] if vc_result["members"] else None),
+                                "device_type": device_type.model,
+                                "ip": management_ip,
+                                "platform": (f"{software_type}/{software_version}" if software_type else None),
+                                "interface_count": vc_result.get("interface_count", 0),
+                                "poe_count": vc_result.get("poe_count", 0),
+                                "virtual_chassis": True,
+                                "virtual_chassis_id": vc_result.get("virtual_chassis_id"),
+                                "member_count": len(vc_result.get("members", [])),
+                            }
+                        )
                     else:
-                        results["errors"].append({
-                            "hostname": hostname_base,
-                            "error": vc_result.get("error", "Unknown error creating virtual chassis"),
-                        })
+                        results["errors"].append(
+                            {
+                                "hostname": hostname_base,
+                                "error": vc_result.get("error", "Unknown error creating virtual chassis"),
+                            }
+                        )
                     continue
 
                 # Create the device (single device mode - non-stack or VC disabled)
@@ -2183,7 +2299,7 @@ class ImportDevicesView(View):
                         "netbox_id": new_device.pk,
                         "device_type": device_type.model,
                         "ip": management_ip,
-                        "platform": f"{software_type}/{software_version}" if software_type else None,
+                        "platform": (f"{software_type}/{software_version}" if software_type else None),
                         "interface_count": interface_count,
                         "poe_count": poe_count,
                     }

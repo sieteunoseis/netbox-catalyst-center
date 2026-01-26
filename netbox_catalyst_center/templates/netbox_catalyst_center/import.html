@@ -391,9 +391,13 @@ function renderSearchResults(devices, totalInDnac) {
 
         var roleDisplay = device.role || device.device_family || '-';
 
+        var stackBadge = device.is_stack
+            ? ' <span class="badge bg-info text-white" title="' + device.stack_count + '-member stack"><i class="mdi mdi-layers-triple"></i> Stack (' + device.stack_count + ')</span>'
+            : '';
+
         row.innerHTML =
             '<td>' + checkbox + '</td>' +
-            '<td><strong>' + (device.hostname || 'N/A') + '</strong> ' + reachability + '</td>' +
+            '<td><strong>' + (device.hostname || 'N/A') + '</strong> ' + reachability + stackBadge + '</td>' +
             '<td><code>' + (device.management_ip || 'N/A') + '</code></td>' +
             '<td><small>' + (device.platform || device.device_family || 'N/A') + '</small></td>' +
             '<td><small><code>' + (device.serial_number || 'N/A') + '</code></small></td>' +
@@ -537,9 +541,24 @@ document.getElementById('import-btn').addEventListener('click', function() {
                         stats.push('<i class="mdi mdi-flash text-warning"></i> <strong>' + d.poe_count + '</strong> POE ports');
                     }
                     var statsHtml = stats.length > 0 ? '<br><small>' + stats.join(' &nbsp;|&nbsp; ') + '</small>' : '';
+
+                    // Check if this is a virtual chassis import
+                    var vcBadge = d.virtual_chassis
+                        ? ' <span class="badge bg-info text-white"><i class="mdi mdi-layers-triple"></i> Virtual Chassis (' + d.member_count + ' members)</span>'
+                        : '';
+
+                    // Show appropriate view button(s)
+                    var viewButtons = '';
+                    if (d.virtual_chassis && d.virtual_chassis_id) {
+                        viewButtons = '<a href="/dcim/virtual-chassis/' + d.virtual_chassis_id + '/" class="btn btn-sm btn-outline-info me-1"><i class="mdi mdi-layers-triple"></i> View VC</a>' +
+                            '<a href="/dcim/devices/' + d.netbox_id + '/" class="btn btn-sm btn-outline-primary">View Master</a>';
+                    } else {
+                        viewButtons = '<a href="/dcim/devices/' + d.netbox_id + '/" class="btn btn-sm btn-outline-primary">View</a>';
+                    }
+
                     html += '<li class="list-group-item d-flex justify-content-between align-items-center">' +
-                        '<div><i class="mdi mdi-check text-success me-2"></i><strong>' + d.hostname + '</strong> <span class="text-muted">(' + d.device_type + ')</span>' + statsHtml + '</div>' +
-                        '<a href="/dcim/devices/' + d.netbox_id + '/" class="btn btn-sm btn-outline-primary">View</a></li>';
+                        '<div><i class="mdi mdi-check text-success me-2"></i><strong>' + d.hostname + '</strong> <span class="text-muted">(' + d.device_type + ')</span>' + vcBadge + statsHtml + '</div>' +
+                        '<div>' + viewButtons + '</div></li>';
                 });
                 html += '</ul></div>';
             }
