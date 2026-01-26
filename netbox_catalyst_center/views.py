@@ -1671,6 +1671,7 @@ def _import_as_virtual_chassis(
             - error: Error message if failed
     """
     from dcim.models import Device, Interface, VirtualChassis
+    from django.db import transaction
     from django.utils import timezone
 
     from .catalyst_client import get_client
@@ -1688,98 +1689,96 @@ def _import_as_virtual_chassis(
     master_device = None
 
     try:
-        # Create Virtual Chassis first (using hostname as the name)
-        vc = VirtualChassis(
-            name=hostname_base,
-        )
-        vc.save()
-
-        # Create member devices
-        for member_num in range(1, stack_count + 1):
-            member_name = f"{hostname_base}.{member_num}"
-            member_serial = serial_list[member_num - 1] if member_num <= len(serial_list) else ""
-
-            # Check if this member already exists
-            existing = Device.objects.filter(name__iexact=member_name).first()
-            if existing:
-                continue
-
-            member_device = Device(
-                name=member_name,
-                device_type=device_type,
-                role=role,
-                site=default_site,
-                serial=member_serial,
-                status="active",
-                platform=device_platform,
-                virtual_chassis=vc,
-                vc_position=member_num,
-                vc_priority=255 if member_num == 1 else 128,  # Master gets highest priority
-                comments=f"Imported from Catalyst Center (Virtual Chassis member {member_num})\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
+        with transaction.atomic():
+            # Create Virtual Chassis first (using hostname as the name)
+            vc = VirtualChassis(
+                name=hostname_base,
             )
-            member_device.save()
+            vc.save()
 
-            # Populate custom fields
-            member_device.custom_field_data["cc_device_id"] = device_id
-            member_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
-            member_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
-            member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
-            member_device.save()
+            # Create member devices
+            for member_num in range(1, stack_count + 1):
+                member_name = f"{hostname_base}.{member_num}"
+                member_serial = serial_list[member_num - 1] if member_num <= len(serial_list) else ""
 
-            created_members.append(
-                {
-                    "name": member_name,
-                    "netbox_id": member_device.pk,
-                    "serial": member_serial,
-                    "vc_position": member_num,
-                }
-            )
+                # Check if this member already exists
+                existing = Device.objects.filter(name__iexact=member_name).first()
+                if existing:
+                    continue
 
-            # First member is the master
-            if member_num == 1:
-                master_device = member_device
-
-        if not master_device:
-            return {
-                "success": False,
-                "error": "Failed to create master device",
-            }
-
-        # Set master on the virtual chassis
-        vc.master = master_device
-        vc.save()
-
-        # Create management interface on master device
-        mgmt_interface = Interface(
-            device=master_device,
-            name="Management",
-            type="other",
-        )
-        mgmt_interface.save()
-
-        # Create IP address on master if available
-        if management_ip:
-            from ipam.models import IPAddress
-
-            ip_with_prefix = f"{management_ip}/32"
-            existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
-
-            if existing_ip:
-                existing_ip.assigned_object = mgmt_interface
-                existing_ip.save()
-                master_device.primary_ip4 = existing_ip
-            else:
-                new_ip = IPAddress(
-                    address=ip_with_prefix,
-                    assigned_object=mgmt_interface,
-                    description="Management IP from Catalyst Center",
+                member_device = Device(
+                    name=member_name,
+                    device_type=device_type,
+                    role=role,
+                    site=default_site,
+                    serial=member_serial,
+                    status="active",
+                    platform=device_platform,
+                    virtual_chassis=vc,
+                    vc_position=member_num,
+                    vc_priority=255 if member_num == 1 else 128,  # Master gets highest priority
+                    comments=f"Imported from Catalyst Center (Virtual Chassis member {member_num})\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
                 )
-                new_ip.save()
-                master_device.primary_ip4 = new_ip
+                member_device.save()
 
-            master_device.save()
+                # Populate custom fields
+                member_device.custom_field_data["cc_device_id"] = device_id
+                member_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
+                member_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
+                member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+                member_device.save()
 
-        # Sync interfaces if requested
+                created_members.append(
+                    {
+                        "name": member_name,
+                        "netbox_id": member_device.pk,
+                        "serial": member_serial,
+                        "vc_position": member_num,
+                    }
+                )
+
+                # First member is the master
+                if member_num == 1:
+                    master_device = member_device
+
+            if not master_device:
+                raise ValueError("Failed to create master device")
+
+            # Set master on the virtual chassis
+            vc.master = master_device
+            vc.save()
+
+            # Create management interface on master device
+            mgmt_interface = Interface(
+                device=master_device,
+                name="Management",
+                type="other",
+            )
+            mgmt_interface.save()
+
+            # Create IP address on master if available
+            if management_ip:
+                from ipam.models import IPAddress
+
+                ip_with_prefix = f"{management_ip}/32"
+                existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
+
+                if existing_ip:
+                    existing_ip.assigned_object = mgmt_interface
+                    existing_ip.save()
+                    master_device.primary_ip4 = existing_ip
+                else:
+                    new_ip = IPAddress(
+                        address=ip_with_prefix,
+                        assigned_object=mgmt_interface,
+                        description="Management IP from Catalyst Center",
+                    )
+                    new_ip.save()
+                    master_device.primary_ip4 = new_ip
+
+                master_device.save()
+
+        # Sync interfaces if requested (outside transaction - external API call)
         interface_count = 0
         poe_count = 0
         if sync_interfaces and device_id:

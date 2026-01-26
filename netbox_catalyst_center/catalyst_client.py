@@ -687,6 +687,47 @@ class CatalystCenterClient:
 
         return poe_info
 
+    def _detect_stack(self, device):
+        """
+        Detect if a device is a stack and return stack info.
+
+        Args:
+            device: Raw device data from Catalyst Center API
+
+        Returns:
+            tuple: (is_stack, stack_count, serial_list, platform_list)
+        """
+        platform_raw = device.get("platformId") or ""
+        serial_raw = device.get("serialNumber") or ""
+        line_card_count = device.get("lineCardCount")
+
+        is_stack = False
+        stack_count = 1
+
+        # Check lineCardCount first (most reliable)
+        if line_card_count:
+            try:
+                lc_count = int(line_card_count)
+                if lc_count > 1:
+                    is_stack = True
+                    stack_count = lc_count
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback: check for comma-separated values
+        if not is_stack and ("," in platform_raw or "," in serial_raw):
+            is_stack = True
+            if "," in serial_raw:
+                stack_count = len([s.strip() for s in serial_raw.split(",") if s.strip()])
+            elif "," in platform_raw:
+                stack_count = len([p.strip() for p in platform_raw.split(",") if p.strip()])
+
+        # Build lists
+        platform_list = [p.strip() for p in platform_raw.split(",") if p.strip()] if platform_raw else []
+        serial_list = [s.strip() for s in serial_raw.split(",") if s.strip()] if serial_raw else []
+
+        return is_stack, stack_count, serial_list, platform_list
+
     def search_devices(self, search_type, search_value, limit=50):
         """
         Search for devices in Catalyst Center inventory.
@@ -719,13 +760,16 @@ class CatalystCenterClient:
             devices = result.get("response", [])
             matched_devices = []
             for device in devices:
+                is_stack, stack_count, serial_list, platform_list = self._detect_stack(device)
                 matched_devices.append(
                     {
                         "hostname": device.get("hostname"),
                         "management_ip": device.get("managementIpAddress"),
                         "serial_number": device.get("serialNumber"),
+                        "serial_list": serial_list,
                         "mac_address": device.get("macAddress"),
                         "platform": self._dedupe_platform(device.get("platformId")),
+                        "platform_list": platform_list,
                         "software_version": device.get("softwareVersion"),
                         "software_type": device.get("softwareType"),
                         "device_family": device.get("family"),
@@ -734,6 +778,8 @@ class CatalystCenterClient:
                         "reachability_status": device.get("reachabilityStatus"),
                         "snmp_location": device.get("snmpLocation"),
                         "device_id": device.get("id"),
+                        "is_stack": is_stack,
+                        "stack_count": stack_count,
                     }
                 )
 
@@ -834,13 +880,16 @@ class CatalystCenterClient:
                     pass
 
             if match:
+                is_stack, stack_count, serial_list, platform_list = self._detect_stack(device)
                 matched_devices.append(
                     {
                         "hostname": device.get("hostname"),
                         "management_ip": device.get("managementIpAddress"),
                         "serial_number": device.get("serialNumber"),
+                        "serial_list": serial_list,
                         "mac_address": device.get("macAddress"),
                         "platform": self._dedupe_platform(device.get("platformId")),
+                        "platform_list": platform_list,
                         "software_version": device.get("softwareVersion"),
                         "software_type": device.get("softwareType"),
                         "device_family": device.get("family"),
@@ -849,6 +898,8 @@ class CatalystCenterClient:
                         "reachability_status": device.get("reachabilityStatus"),
                         "snmp_location": device.get("snmpLocation"),
                         "device_id": device.get("id"),
+                        "is_stack": is_stack,
+                        "stack_count": stack_count,
                     }
                 )
 
