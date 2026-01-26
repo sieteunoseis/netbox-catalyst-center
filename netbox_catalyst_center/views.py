@@ -55,10 +55,18 @@ def get_device_lookup_method(device):
 
     # Get device info for matching
     manufacturer = device.device_type.manufacturer
-    manufacturer_slug = manufacturer.slug.lower() if manufacturer and manufacturer.slug else ""
-    manufacturer_name = manufacturer.name.lower() if manufacturer and manufacturer.name else ""
-    device_type_slug = device.device_type.slug.lower() if device.device_type.slug else ""
-    device_type_model = device.device_type.model.lower() if device.device_type.model else ""
+    manufacturer_slug = (
+        manufacturer.slug.lower() if manufacturer and manufacturer.slug else ""
+    )
+    manufacturer_name = (
+        manufacturer.name.lower() if manufacturer and manufacturer.name else ""
+    )
+    device_type_slug = (
+        device.device_type.slug.lower() if device.device_type.slug else ""
+    )
+    device_type_model = (
+        device.device_type.model.lower() if device.device_type.model else ""
+    )
 
     # Check each mapping
     for mapping in mappings:
@@ -70,13 +78,16 @@ def get_device_lookup_method(device):
         manufacturer_match = False
         if manufacturer_pattern:
             try:
-                if re.search(manufacturer_pattern, manufacturer_slug, re.IGNORECASE) or re.search(
-                    manufacturer_pattern, manufacturer_name, re.IGNORECASE
-                ):
+                if re.search(
+                    manufacturer_pattern, manufacturer_slug, re.IGNORECASE
+                ) or re.search(manufacturer_pattern, manufacturer_name, re.IGNORECASE):
                     manufacturer_match = True
             except re.error:
                 # Invalid regex, try literal match
-                if manufacturer_pattern in manufacturer_slug or manufacturer_pattern in manufacturer_name:
+                if (
+                    manufacturer_pattern in manufacturer_slug
+                    or manufacturer_pattern in manufacturer_name
+                ):
                     manufacturer_match = True
 
         if not manufacturer_match:
@@ -86,12 +97,15 @@ def get_device_lookup_method(device):
         if device_type_pattern:
             device_type_match = False
             try:
-                if re.search(device_type_pattern, device_type_slug, re.IGNORECASE) or re.search(
-                    device_type_pattern, device_type_model, re.IGNORECASE
-                ):
+                if re.search(
+                    device_type_pattern, device_type_slug, re.IGNORECASE
+                ) or re.search(device_type_pattern, device_type_model, re.IGNORECASE):
                     device_type_match = True
             except re.error:
-                if device_type_pattern in device_type_slug or device_type_pattern in device_type_model:
+                if (
+                    device_type_pattern in device_type_slug
+                    or device_type_pattern in device_type_model
+                ):
                     device_type_match = True
 
             if not device_type_match:
@@ -205,7 +219,9 @@ class DeviceCatalystCenterView(generic.ObjectView):
     def get(self, request, pk):
         """Handle GET request for the Catalyst Center tab."""
         device = (
-            Device.objects.select_related("device_type__manufacturer", "platform", "primary_ip4", "primary_ip6")
+            Device.objects.select_related(
+                "device_type__manufacturer", "platform", "primary_ip4", "primary_ip6"
+            )
             .prefetch_related("interfaces")
             .get(pk=pk)
         )
@@ -230,7 +246,15 @@ class DeviceCatalystCenterView(generic.ObjectView):
                 elif device.primary_ip6:
                     management_ip = str(device.primary_ip6.address.ip)
 
-                client_data = client.get_network_device(device.name, management_ip=management_ip)
+                # Use VC name for virtual chassis members (original hostname)
+                lookup_hostname = (
+                    device.virtual_chassis.name
+                    if device.virtual_chassis
+                    else device.name
+                )
+                client_data = client.get_network_device(
+                    lookup_hostname, management_ip=management_ip
+                )
                 if "error" in client_data:
                     error = client_data.get("error")
                     client_data = {}
@@ -387,13 +411,20 @@ class SyncDeviceFromDNACView(View):
         try:
             device = Device.objects.get(pk=pk)
         except Device.DoesNotExist:
-            return JsonResponse({"success": False, "error": "Device not found"}, status=404)
+            return JsonResponse(
+                {"success": False, "error": "Device not found"}, status=404
+            )
 
         try:
             return self._do_sync(request, device)
         except Exception as e:
             return JsonResponse(
-                {"success": False, "error": f"Sync failed: {str(e)}", "traceback": traceback.format_exc()}, status=500
+                {
+                    "success": False,
+                    "error": f"Sync failed: {str(e)}",
+                    "traceback": traceback.format_exc(),
+                },
+                status=500,
             )
 
     def _do_sync(self, request, device):
@@ -408,7 +439,9 @@ class SyncDeviceFromDNACView(View):
         except json.JSONDecodeError:
             body = {}
 
-        sync_ip = body.get("sync_ip", True)  # Default to True for backwards compatibility
+        sync_ip = body.get(
+            "sync_ip", True
+        )  # Default to True for backwards compatibility
         sync_serial = body.get("sync_serial", False)
         sync_location = body.get("sync_location", False)
         sync_device_type = body.get("sync_device_type", False)
@@ -421,7 +454,10 @@ class SyncDeviceFromDNACView(View):
 
         client = get_client()
         if not client:
-            return JsonResponse({"success": False, "error": "Catalyst Center not configured"}, status=400)
+            return JsonResponse(
+                {"success": False, "error": "Catalyst Center not configured"},
+                status=400,
+            )
 
         # Get device data from DNAC
         lookup_method, _ = get_device_lookup_method(device)
@@ -434,18 +470,31 @@ class SyncDeviceFromDNACView(View):
             elif device.primary_ip6:
                 management_ip = str(device.primary_ip6.address.ip)
 
-            dnac_data = client.get_network_device(device.name, management_ip=management_ip)
+            # Use VC name for virtual chassis members (original hostname)
+            lookup_hostname = (
+                device.virtual_chassis.name if device.virtual_chassis else device.name
+            )
+            dnac_data = client.get_network_device(
+                lookup_hostname, management_ip=management_ip
+            )
         elif lookup_method == "client":
             mac_address = get_device_mac(device)
             if mac_address:
                 dnac_data = client.get_client_detail(mac_address)
             else:
-                return JsonResponse({"success": False, "error": "No MAC address found"}, status=400)
+                return JsonResponse(
+                    {"success": False, "error": "No MAC address found"}, status=400
+                )
         else:
-            return JsonResponse({"success": False, "error": "Device not configured for DNAC lookup"}, status=400)
+            return JsonResponse(
+                {"success": False, "error": "Device not configured for DNAC lookup"},
+                status=400,
+            )
 
         if "error" in dnac_data:
-            return JsonResponse({"success": False, "error": dnac_data["error"]}, status=400)
+            return JsonResponse(
+                {"success": False, "error": dnac_data["error"]}, status=400
+            )
 
         changes = []
         device_changed = False
@@ -456,7 +505,9 @@ class SyncDeviceFromDNACView(View):
             if dnac_ip:
                 ip_result = self._sync_ip_address(device, dnac_ip)
                 if ip_result.get("error"):
-                    return JsonResponse({"success": False, "error": ip_result["error"]}, status=400)
+                    return JsonResponse(
+                        {"success": False, "error": ip_result["error"]}, status=400
+                    )
                 changes.extend(ip_result.get("changes", []))
                 if ip_result.get("changed"):
                     device_changed = True
@@ -477,7 +528,9 @@ class SyncDeviceFromDNACView(View):
                 location_prefix = "SNMP Location: "
                 if location_prefix not in (device.comments or ""):
                     if device.comments:
-                        device.comments = f"{device.comments}\n\n{location_prefix}{dnac_location}"
+                        device.comments = (
+                            f"{device.comments}\n\n{location_prefix}{dnac_location}"
+                        )
                     else:
                         device.comments = f"{location_prefix}{dnac_location}"
                     changes.append("Added SNMP location to comments")
@@ -514,7 +567,9 @@ class SyncDeviceFromDNACView(View):
                 )
 
                 if device.device_type != device_type:
-                    old_type = device.device_type.model if device.device_type else "None"
+                    old_type = (
+                        device.device_type.model if device.device_type else "None"
+                    )
                     device.device_type = device_type
                     changes.append(f"Device Type: {old_type} → {platform_id}")
                     device_changed = True
@@ -535,7 +590,9 @@ class SyncDeviceFromDNACView(View):
 
                 # Get or create child platform (software version under parent)
                 child_slug = (
-                    f"{software_type.lower()}-{software_version.lower()}".replace(" ", "-")
+                    f"{software_type.lower()}-{software_version.lower()}".replace(
+                        " ", "-"
+                    )
                     .replace("(", "")
                     .replace(")", "")
                 )
@@ -555,12 +612,16 @@ class SyncDeviceFromDNACView(View):
                 if device.platform != child_platform:
                     old_platform = device.platform.name if device.platform else "None"
                     device.platform = child_platform
-                    changes.append(f"Platform: {old_platform} → {software_type}/{software_version}")
+                    changes.append(
+                        f"Platform: {old_platform} → {software_type}/{software_version}"
+                    )
                     device_changed = True
 
         # Sync custom fields (individual fields)
         if sync_cc_id or sync_cc_series or sync_cc_role:
-            cf_changes = self._sync_custom_fields(device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role)
+            cf_changes = self._sync_custom_fields(
+                device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role
+            )
             changes.extend(cf_changes)
             if cf_changes:
                 device_changed = True
@@ -595,14 +656,24 @@ class SyncDeviceFromDNACView(View):
 
         if not changes:
             return JsonResponse(
-                {"success": True, "message": "No changes needed - device is already in sync", "changes": []}
+                {
+                    "success": True,
+                    "message": "No changes needed - device is already in sync",
+                    "changes": [],
+                }
             )
 
         return JsonResponse(
-            {"success": True, "message": f"Synced {len(changes)} field(s) from Catalyst Center", "changes": changes}
+            {
+                "success": True,
+                "message": f"Synced {len(changes)} field(s) from Catalyst Center",
+                "changes": changes,
+            }
         )
 
-    def _sync_custom_fields(self, device, dnac_data, sync_id=True, sync_series=True, sync_role=True):
+    def _sync_custom_fields(
+        self, device, dnac_data, sync_id=True, sync_series=True, sync_role=True
+    ):
         """Sync Catalyst Center custom fields. Returns list of change descriptions."""
         from django.utils import timezone
 
@@ -649,7 +720,10 @@ class SyncDeviceFromDNACView(View):
 
         if existing_ip:
             # IP exists - check if it's assigned to this device
-            if existing_ip.assigned_object and existing_ip.assigned_object.device == device:
+            if (
+                existing_ip.assigned_object
+                and existing_ip.assigned_object.device == device
+            ):
                 # Already assigned to this device, just set as primary if not already
                 if device.primary_ip4 != existing_ip:
                     device.primary_ip4 = existing_ip
@@ -659,7 +733,9 @@ class SyncDeviceFromDNACView(View):
                 # IP exists but assigned elsewhere or unassigned
                 interface = device.interfaces.first()
                 if not interface:
-                    return {"error": f"IP {dnac_ip} exists but device has no interfaces to assign it to"}
+                    return {
+                        "error": f"IP {dnac_ip} exists but device has no interfaces to assign it to"
+                    }
 
                 # Reassign the IP to this device's interface
                 existing_ip.assigned_object = interface
@@ -868,11 +944,15 @@ class SyncDeviceFromDNACView(View):
             changes.append("Interfaces: no changes")
 
         # Create journal entry with CC interface data
-        self._create_interface_journal(device, cc_interfaces, created_count, updated_count)
+        self._create_interface_journal(
+            device, cc_interfaces, created_count, updated_count
+        )
 
         return {"changes": changes}
 
-    def _sync_interfaces_virtual_chassis(self, master_device, member_devices, client, device_id):
+    def _sync_interfaces_virtual_chassis(
+        self, master_device, member_devices, client, device_id
+    ):
         """
         Sync interfaces from Catalyst Center to Virtual Chassis member devices.
 
@@ -933,7 +1013,9 @@ class SyncDeviceFromDNACView(View):
             netbox_type = self._map_interface_type(cc_iface)
 
             # Get existing interfaces on target device
-            existing_interfaces = {iface.name: iface for iface in target_device.interfaces.all()}
+            existing_interfaces = {
+                iface.name: iface for iface in target_device.interfaces.all()
+            }
 
             # Check if interface exists
             if iface_name in existing_interfaces:
@@ -1053,7 +1135,9 @@ class SyncDeviceFromDNACView(View):
         # Set LAG membership for interfaces that belong to port-channels
         # Port-channels are logical interfaces assigned to master
         lag_count = 0
-        master_interfaces = {iface.name: iface for iface in master_device.interfaces.all()}
+        master_interfaces = {
+            iface.name: iface for iface in master_device.interfaces.all()
+        }
 
         for cc_iface in cc_interfaces:
             mapped_lag_name = cc_iface.get("mapped_physical_interface_name")
@@ -1092,11 +1176,15 @@ class SyncDeviceFromDNACView(View):
             changes.append("Interfaces: no changes")
 
         # Create journal entry on master with CC interface data
-        self._create_interface_journal(master_device, cc_interfaces, created_count, updated_count)
+        self._create_interface_journal(
+            master_device, cc_interfaces, created_count, updated_count
+        )
 
         return {"changes": changes}
 
-    def _create_interface_journal(self, device, cc_interfaces, created_count, updated_count):
+    def _create_interface_journal(
+        self, device, cc_interfaces, created_count, updated_count
+    ):
         """Create a journal entry on the device with CC interface sync data."""
         import json
 
@@ -1132,7 +1220,9 @@ class SyncDeviceFromDNACView(View):
             comments += "\n```"
 
             if len(cc_interfaces) > 50:
-                comments += f"\n\n*Note: Showing first 50 of {len(cc_interfaces)} interfaces*"
+                comments += (
+                    f"\n\n*Note: Showing first 50 of {len(cc_interfaces)} interfaces*"
+                )
 
             JournalEntry.objects.create(
                 assigned_object=device,
@@ -1422,7 +1512,9 @@ class SyncDeviceFromDNACView(View):
         if interfaces_to_update:
             from dcim.models import Interface
 
-            Interface.objects.bulk_update(interfaces_to_update, ["poe_mode", "poe_type"])
+            Interface.objects.bulk_update(
+                interfaces_to_update, ["poe_mode", "poe_type"]
+            )
 
         # Summary
         summary_parts = []
@@ -1533,7 +1625,9 @@ class SyncDeviceFromDNACView(View):
             comments += "\n```"
 
             if len(poe_interfaces) > 50:
-                comments += f"\n\n*Note: Showing first 50 of {len(poe_interfaces)} POE ports*"
+                comments += (
+                    f"\n\n*Note: Showing first 50 of {len(poe_interfaces)} POE ports*"
+                )
 
             JournalEntry.objects.create(
                 assigned_object=device,
@@ -1543,7 +1637,9 @@ class SyncDeviceFromDNACView(View):
         except Exception as e:
             import logging
 
-            logging.getLogger(__name__).warning(f"Failed to create POE journal entry: {e}")
+            logging.getLogger(__name__).warning(
+                f"Failed to create POE journal entry: {e}"
+            )
 
 
 class ImportPageView(View):
@@ -1619,8 +1715,15 @@ class SearchDevicesView(View):
             # Also check for virtual chassis member devices (hostname.1, hostname.2, etc.)
             is_stack = device.get("is_stack", False)
             stack_count = device.get("stack_count", 1)
-            if not existing and is_virtual_chassis_enabled() and is_stack and stack_count > 1:
-                hostname_base = hostname.lower().replace(".ohsu.edu", "") if hostname else ""
+            if (
+                not existing
+                and is_virtual_chassis_enabled()
+                and is_stack
+                and stack_count > 1
+            ):
+                hostname_base = (
+                    hostname.lower().replace(".ohsu.edu", "") if hostname else ""
+                )
                 for member_num in range(1, stack_count + 1):
                     member_name = f"{hostname_base}.{member_num}"
                     existing = Device.objects.filter(name__iexact=member_name).first()
@@ -1629,7 +1732,9 @@ class SearchDevicesView(View):
 
             device["exists_in_netbox"] = existing is not None
             device["netbox_device_id"] = existing.pk if existing else None
-            device["netbox_device_url"] = existing.get_absolute_url() if existing else None
+            device["netbox_device_url"] = (
+                existing.get_absolute_url() if existing else None
+            )
 
         return JsonResponse(result)
 
@@ -1699,7 +1804,11 @@ def _import_as_virtual_chassis(
             # Create member devices
             for member_num in range(1, stack_count + 1):
                 member_name = f"{hostname_base}.{member_num}"
-                member_serial = serial_list[member_num - 1] if member_num <= len(serial_list) else ""
+                member_serial = (
+                    serial_list[member_num - 1]
+                    if member_num <= len(serial_list)
+                    else ""
+                )
 
                 # Check if this member already exists
                 existing = Device.objects.filter(name__iexact=member_name).first()
@@ -1716,16 +1825,22 @@ def _import_as_virtual_chassis(
                     platform=device_platform,
                     virtual_chassis=vc,
                     vc_position=member_num,
-                    vc_priority=255 if member_num == 1 else 128,  # Master gets highest priority
+                    vc_priority=(
+                        255 if member_num == 1 else 128
+                    ),  # Master gets highest priority
                     comments=f"Imported from Catalyst Center (Virtual Chassis member {member_num})\nSNMP Location: {dnac_device.get('snmp_location', 'N/A')}",
                 )
                 member_device.save()
 
                 # Populate custom fields
                 member_device.custom_field_data["cc_device_id"] = device_id
-                member_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
+                member_device.custom_field_data["cc_series"] = dnac_device.get(
+                    "series", ""
+                )
                 member_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
-                member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+                member_device.custom_field_data["cc_last_sync"] = (
+                    timezone.now().isoformat()
+                )
                 member_device.save()
 
                 created_members.append(
@@ -1786,7 +1901,10 @@ def _import_as_virtual_chassis(
             if client:
                 try:
                     # Build a device lookup for each member by position
-                    member_devices = {d.vc_position: d for d in Device.objects.filter(virtual_chassis=vc)}
+                    member_devices = {
+                        d.vc_position: d
+                        for d in Device.objects.filter(virtual_chassis=vc)
+                    }
 
                     sync_view = SyncDeviceFromDNACView()
                     iface_result = sync_view._sync_interfaces_virtual_chassis(
@@ -1806,7 +1924,9 @@ def _import_as_virtual_chassis(
                     # Sync POE data for all members
                     for member_device in member_devices.values():
                         try:
-                            poe_result = sync_view._sync_poe(member_device, client, device_id)
+                            poe_result = sync_view._sync_poe(
+                                member_device, client, device_id
+                            )
                             for change in poe_result.get("changes", []):
                                 if "updated" in change:
                                     parts = change.split()
@@ -1856,7 +1976,15 @@ class ImportDevicesView(View):
         """
         import json
 
-        from dcim.models import DeviceRole, DeviceType, Interface, Manufacturer, Platform, Site, VirtualChassis
+        from dcim.models import (
+            DeviceRole,
+            DeviceType,
+            Interface,
+            Manufacturer,
+            Platform,
+            Site,
+            VirtualChassis,
+        )
 
         try:
             body = json.loads(request.body) if request.body else {}
@@ -1875,7 +2003,9 @@ class ImportDevicesView(View):
         MAX_IMPORT_LIMIT = 25
         if len(devices_to_import) > MAX_IMPORT_LIMIT:
             return JsonResponse(
-                {"error": f"Maximum {MAX_IMPORT_LIMIT} devices can be imported at a time"},
+                {
+                    "error": f"Maximum {MAX_IMPORT_LIMIT} devices can be imported at a time"
+                },
                 status=400,
             )
 
@@ -1926,10 +2056,16 @@ class ImportDevicesView(View):
                     if p and p not in seen:
                         seen.add(p)
                         unique_parts.append(p)
-                platform = ", ".join(unique_parts) if len(unique_parts) > 1 else unique_parts[0] if unique_parts else ""
+                platform = (
+                    ", ".join(unique_parts)
+                    if len(unique_parts) > 1
+                    else unique_parts[0] if unique_parts else ""
+                )
 
             if not hostname:
-                results["errors"].append({"device": dnac_device, "error": "No hostname"})
+                results["errors"].append(
+                    {"device": dnac_device, "error": "No hostname"}
+                )
                 continue
 
             # Normalize hostname (remove domain)
@@ -1943,7 +2079,12 @@ class ImportDevicesView(View):
             # Also check for virtual chassis member devices (hostname.1, hostname.2, etc.)
             is_stack = dnac_device.get("is_stack", False)
             stack_count = dnac_device.get("stack_count", 1)
-            if not existing and is_virtual_chassis_enabled() and is_stack and stack_count > 1:
+            if (
+                not existing
+                and is_virtual_chassis_enabled()
+                and is_stack
+                and stack_count > 1
+            ):
                 # Check if any virtual chassis member already exists
                 for member_num in range(1, stack_count + 1):
                     member_name = f"{hostname_base}.{member_num}"
@@ -2030,7 +2171,9 @@ class ImportDevicesView(View):
 
                     # Get or create child platform (software version under parent)
                     child_slug = (
-                        f"{software_type.lower()}-{software_version.lower()}".replace(" ", "-")
+                        f"{software_type.lower()}-{software_version.lower()}".replace(
+                            " ", "-"
+                        )
                         .replace("(", "")
                         .replace(")", "")
                     )
@@ -2067,14 +2210,24 @@ class ImportDevicesView(View):
                         results["created"].append(
                             {
                                 "hostname": hostname_base,
-                                "netbox_id": vc_result["members"][0]["netbox_id"] if vc_result["members"] else None,
+                                "netbox_id": (
+                                    vc_result["members"][0]["netbox_id"]
+                                    if vc_result["members"]
+                                    else None
+                                ),
                                 "device_type": device_type.model,
                                 "ip": management_ip,
-                                "platform": f"{software_type}/{software_version}" if software_type else None,
+                                "platform": (
+                                    f"{software_type}/{software_version}"
+                                    if software_type
+                                    else None
+                                ),
                                 "interface_count": vc_result.get("interface_count", 0),
                                 "poe_count": vc_result.get("poe_count", 0),
                                 "virtual_chassis": True,
-                                "virtual_chassis_id": vc_result.get("virtual_chassis_id"),
+                                "virtual_chassis_id": vc_result.get(
+                                    "virtual_chassis_id"
+                                ),
                                 "member_count": len(vc_result.get("members", [])),
                             }
                         )
@@ -2082,7 +2235,9 @@ class ImportDevicesView(View):
                         results["errors"].append(
                             {
                                 "hostname": hostname_base,
-                                "error": vc_result.get("error", "Unknown error creating virtual chassis"),
+                                "error": vc_result.get(
+                                    "error", "Unknown error creating virtual chassis"
+                                ),
                             }
                         )
                     continue
@@ -2103,10 +2258,16 @@ class ImportDevicesView(View):
                 # Populate custom fields
                 from django.utils import timezone
 
-                new_device.custom_field_data["cc_device_id"] = dnac_device.get("device_id", "")
-                new_device.custom_field_data["cc_series"] = dnac_device.get("series", "")
+                new_device.custom_field_data["cc_device_id"] = dnac_device.get(
+                    "device_id", ""
+                )
+                new_device.custom_field_data["cc_series"] = dnac_device.get(
+                    "series", ""
+                )
                 new_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
-                new_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
+                new_device.custom_field_data["cc_last_sync"] = (
+                    timezone.now().isoformat()
+                )
                 new_device.save()
 
                 # Create a management interface (use 'other' type for management)
@@ -2120,7 +2281,9 @@ class ImportDevicesView(View):
                 # Create IP address if available
                 if management_ip:
                     ip_with_prefix = f"{management_ip}/32"
-                    existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
+                    existing_ip = IPAddress.objects.filter(
+                        address=ip_with_prefix
+                    ).first()
 
                     if existing_ip:
                         # IP exists - reassign to this device
@@ -2150,7 +2313,9 @@ class ImportDevicesView(View):
                             try:
                                 # Use the sync view's interface sync method
                                 sync_view = SyncDeviceFromDNACView()
-                                iface_result = sync_view._sync_interfaces(new_device, client, device_id)
+                                iface_result = sync_view._sync_interfaces(
+                                    new_device, client, device_id
+                                )
                                 # Parse interface count from result
                                 for change in iface_result.get("changes", []):
                                     if "created" in change:
@@ -2165,7 +2330,9 @@ class ImportDevicesView(View):
 
                                 # Now sync POE data (interfaces exist, so POE can update them)
                                 try:
-                                    poe_result = sync_view._sync_poe(new_device, client, device_id)
+                                    poe_result = sync_view._sync_poe(
+                                        new_device, client, device_id
+                                    )
                                     # Parse POE count from result
                                     for change in poe_result.get("changes", []):
                                         if "updated" in change:
@@ -2196,7 +2363,11 @@ class ImportDevicesView(View):
                         "netbox_id": new_device.pk,
                         "device_type": device_type.model,
                         "ip": management_ip,
-                        "platform": f"{software_type}/{software_version}" if software_type else None,
+                        "platform": (
+                            f"{software_type}/{software_version}"
+                            if software_type
+                            else None
+                        ),
                         "interface_count": interface_count,
                         "poe_count": poe_count,
                     }

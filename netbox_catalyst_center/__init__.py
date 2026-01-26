@@ -49,7 +49,13 @@ def create_custom_fields(sender, **kwargs):
                 "label": "CC Network Role",
                 "type": "select",
                 "description": "Network role from Catalyst Center",
-                "choices": ["ACCESS", "DISTRIBUTION", "CORE", "BORDER ROUTER", "UNKNOWN"],
+                "choices": [
+                    "ACCESS",
+                    "DISTRIBUTION",
+                    "CORE",
+                    "BORDER ROUTER",
+                    "UNKNOWN",
+                ],
             },
             {
                 "name": "cc_last_sync",
@@ -148,7 +154,10 @@ class CatalystCenterConfig(PluginConfig):
         #     {"manufacturer": "cisco", "device_type": ".*phone.*", "lookup": "mac"},  # Cisco phones by MAC
         # ]
         "device_mappings": [
-            {"manufacturer": r"cisco", "lookup": "hostname"},  # Cisco devices by hostname
+            {
+                "manufacturer": r"cisco",
+                "lookup": "hostname",
+            },  # Cisco devices by hostname
         ],
     }
 
