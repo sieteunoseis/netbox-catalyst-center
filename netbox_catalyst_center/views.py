@@ -1269,6 +1269,10 @@ class SyncDeviceFromDNACView(View):
         if name.startswith("nve"):
             return "virtual"
 
+        # Bluetooth interfaces (IEEE 802.15.1)
+        if name.startswith("bluetooth"):
+            return "ieee802.15.1"
+
         # Name-based detection FIRST (interface names are definitive)
         # Extract the interface type prefix before any numbers
         name_prefix = re.sub(r"\d.*", "", name)  # Remove from first digit onwards
