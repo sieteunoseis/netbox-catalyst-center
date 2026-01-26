@@ -149,7 +149,8 @@ def parse_interface_stack_member(interface_name):
     if not interface_name:
         return None
 
-    # Logical interfaces go to master (return None)
+    # Logical/shared interfaces go to master (return None)
+    # These are interfaces that don't belong to a specific stack member
     logical_prefixes = (
         "vlan",
         "loopback",
@@ -162,6 +163,20 @@ def parse_interface_stack_member(interface_name):
         "mgmt",
         "management",
         "appgigabitethernet",  # App interfaces on controllers
+        "stackport",  # Stack interconnect ports
+        "stacksub",  # Stack sub-interfaces
+        "cpu",  # CPU interfaces
+        "ucse",  # UCS-E interfaces
+        "embedded",  # Embedded service interfaces
+        "internal",  # Internal interfaces
+        "service",  # Service interfaces
+        "async",  # Async interfaces
+        "virtual",  # Virtual interfaces
+        "pseudowire",  # Pseudowire interfaces
+        "bvi",  # Bridge Virtual Interface
+        "dialer",  # Dialer interfaces
+        "virtual-access",  # Virtual access interfaces
+        "virtual-template",  # Virtual template interfaces
     )
     iface_lower = interface_name.lower()
     if any(iface_lower.startswith(prefix) for prefix in logical_prefixes):
@@ -178,6 +193,8 @@ def parse_interface_stack_member(interface_name):
     if match:
         return int(match.group(1))
 
+    # If we can't parse the stack member, return None (goes to master as logical)
+    # This is safer than guessing for unparseable interface names
     return None
 
 
