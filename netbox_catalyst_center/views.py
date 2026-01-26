@@ -1834,8 +1834,9 @@ def _import_as_virtual_chassis(
             if not master_device:
                 raise ValueError("Failed to create master device")
 
-            # Set master on the virtual chassis
+            # Set master on the virtual chassis and update member count
             vc.master = master_device
+            vc.member_count = len(created_members)
             vc.save()
 
             # Create management interface on master device
