@@ -37,6 +37,14 @@ class CatalystCenterConfig(PluginConfig):
         "timeout": 30,  # API timeout in seconds
         "cache_timeout": 60,  # Cache results for 60 seconds
         "verify_ssl": False,  # Skip SSL verification for self-signed certs
+        # Virtual Chassis: Import stacks as virtual chassis with separate devices per member
+        # When enabled, stacks are imported as:
+        # - One device per stack member (hostname.1, hostname.2, etc.)
+        # - A Virtual Chassis linking all members
+        # - Physical interfaces assigned to members based on slot (e.g., 2/0/1 -> member 2)
+        # - Logical interfaces (VLANs, Loopbacks, Port-channels) assigned to master
+        # When disabled (default), stacks are imported as single devices
+        "enable_virtual_chassis": False,
         # Device types to show tab for and lookup method
         # Format: list of dicts with manufacturer (regex), device_type (regex, optional), lookup method
         # lookup: "hostname" = network device lookup, "mac" = wireless client lookup
