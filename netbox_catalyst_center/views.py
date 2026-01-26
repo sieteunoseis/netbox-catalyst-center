@@ -1829,6 +1829,7 @@ def _import_as_virtual_chassis(
         return {
             "success": True,
             "chassis_name": hostname_base,
+            "virtual_chassis_id": vc.pk,
             "members": created_members,
             "interface_count": interface_count,
             "poe_count": poe_count,
@@ -2073,6 +2074,7 @@ class ImportDevicesView(View):
                                 "interface_count": vc_result.get("interface_count", 0),
                                 "poe_count": vc_result.get("poe_count", 0),
                                 "virtual_chassis": True,
+                                "virtual_chassis_id": vc_result.get("virtual_chassis_id"),
                                 "member_count": len(vc_result.get("members", [])),
                             }
                         )
