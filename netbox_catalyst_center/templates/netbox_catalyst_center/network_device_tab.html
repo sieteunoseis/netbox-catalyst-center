@@ -386,8 +386,8 @@
                         </div>
                         {% endwith %}
                         {% endif %}
-                        {% if client_data.serial_number %}
-                        {% with current_serial=object.serial|default:"" new_serial=client_data.serial_number %}
+                        {% if client_data.sync_serial_number %}
+                        {% with current_serial=object.serial|default:"" new_serial=client_data.sync_serial_number %}
                         <div class="form-check sync-field {% if current_serial == new_serial %}synced{% endif %}">
                             <input class="form-check-input" type="checkbox" id="sync-serial" {% if current_serial != new_serial %}checked{% endif %}>
                             <label class="form-check-label" for="sync-serial">
