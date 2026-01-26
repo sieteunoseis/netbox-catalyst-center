@@ -151,8 +151,16 @@ def parse_interface_stack_member(interface_name):
 
     # Logical interfaces go to master (return None)
     logical_prefixes = (
-        "vlan", "loopback", "tunnel", "port-channel", "po",
-        "nve", "bdi", "null", "mgmt", "management",
+        "vlan",
+        "loopback",
+        "tunnel",
+        "port-channel",
+        "po",
+        "nve",
+        "bdi",
+        "null",
+        "mgmt",
+        "management",
         "appgigabitethernet",  # App interfaces on controllers
     )
     iface_lower = interface_name.lower()
@@ -1718,12 +1726,14 @@ def _import_as_virtual_chassis(
             member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
             member_device.save()
 
-            created_members.append({
-                "name": member_name,
-                "netbox_id": member_device.pk,
-                "serial": member_serial,
-                "vc_position": member_num,
-            })
+            created_members.append(
+                {
+                    "name": member_name,
+                    "netbox_id": member_device.pk,
+                    "serial": member_serial,
+                    "vc_position": member_num,
+                }
+            )
 
             # First member is the master
             if member_num == 1:
@@ -1777,10 +1787,7 @@ def _import_as_virtual_chassis(
             if client:
                 try:
                     # Build a device lookup for each member by position
-                    member_devices = {
-                        d.vc_position: d
-                        for d in Device.objects.filter(virtual_chassis=vc)
-                    }
+                    member_devices = {d.vc_position: d for d in Device.objects.filter(virtual_chassis=vc)}
 
                     sync_view = SyncDeviceFromDNACView()
                     iface_result = sync_view._sync_interfaces_virtual_chassis(
@@ -1815,6 +1822,7 @@ def _import_as_virtual_chassis(
 
                 except Exception as e:
                     import logging
+
                     logging.getLogger(__name__).warning(
                         f"Failed to sync interfaces for virtual chassis {hostname_base}: {e}"
                     )
@@ -2056,22 +2064,26 @@ class ImportDevicesView(View):
                     )
 
                     if vc_result.get("success"):
-                        results["created"].append({
-                            "hostname": hostname_base,
-                            "netbox_id": vc_result["members"][0]["netbox_id"] if vc_result["members"] else None,
-                            "device_type": device_type.model,
-                            "ip": management_ip,
-                            "platform": f"{software_type}/{software_version}" if software_type else None,
-                            "interface_count": vc_result.get("interface_count", 0),
-                            "poe_count": vc_result.get("poe_count", 0),
-                            "virtual_chassis": True,
-                            "member_count": len(vc_result.get("members", [])),
-                        })
+                        results["created"].append(
+                            {
+                                "hostname": hostname_base,
+                                "netbox_id": vc_result["members"][0]["netbox_id"] if vc_result["members"] else None,
+                                "device_type": device_type.model,
+                                "ip": management_ip,
+                                "platform": f"{software_type}/{software_version}" if software_type else None,
+                                "interface_count": vc_result.get("interface_count", 0),
+                                "poe_count": vc_result.get("poe_count", 0),
+                                "virtual_chassis": True,
+                                "member_count": len(vc_result.get("members", [])),
+                            }
+                        )
                     else:
-                        results["errors"].append({
-                            "hostname": hostname_base,
-                            "error": vc_result.get("error", "Unknown error creating virtual chassis"),
-                        })
+                        results["errors"].append(
+                            {
+                                "hostname": hostname_base,
+                                "error": vc_result.get("error", "Unknown error creating virtual chassis"),
+                            }
+                        )
                     continue
 
                 # Create the device (single device mode - non-stack or VC disabled)
