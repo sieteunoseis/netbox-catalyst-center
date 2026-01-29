@@ -48,16 +48,16 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 ## Screenshots
 
 ### Device Tab - Network Device View
-![Network Device Tab](screenshots/netbox-catalyst-center.png)
+![Network Device Tab](https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/screenshots/netbox-catalyst-center.png)
 
 ### Device Tab - Wireless Client View
-![Wireless Client Tab](screenshots/netbox-catalyst-center-client.png)
+![Wireless Client Tab](https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/screenshots/netbox-catalyst-center-client.png)
 
 ### Import Devices from Catalyst Center
-![Import Devices](docs/netbox-catalyst-center-import.png)
+![Import Devices](https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/docs/netbox-catalyst-center-import.png)
 
 ### Settings Page
-![Settings](screenshots/netbox-catalyst-center-settings.png)
+![Settings](https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/screenshots/netbox-catalyst-center-settings.png)
 
 ## Requirements
 
