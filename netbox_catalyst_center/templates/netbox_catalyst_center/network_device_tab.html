@@ -527,6 +527,16 @@
                                 </small>
                             </label>
                         </div>
+                        <div class="form-check sync-field ms-4 mt-2">
+                            <input class="form-check-input" type="checkbox" id="overwrite-ips" disabled>
+                            <label class="form-check-label" for="overwrite-ips">
+                                <strong>Overwrite existing IPs</strong>
+                                <br><small class="text-muted">
+                                    Remove IPs on synced interfaces that aren't in Catalyst Center data.
+                                    <span class="text-warning"><i class="mdi mdi-alert"></i> Use with caution - may delete valid secondary IPs.</span>
+                                </small>
+                            </label>
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <h6 class="text-muted mb-2"><i class="mdi mdi-flash"></i> Power over Ethernet</h6>
@@ -572,11 +582,27 @@
 
         {% if client_data %}
         <script>
+        // Enable/disable overwrite-ips based on sync-interfaces checkbox
+        var syncInterfacesCheckbox = document.getElementById('sync-interfaces');
+        var overwriteIpsCheckbox = document.getElementById('overwrite-ips');
+        if (syncInterfacesCheckbox && overwriteIpsCheckbox) {
+            syncInterfacesCheckbox.addEventListener('change', function() {
+                overwriteIpsCheckbox.disabled = !this.checked;
+                if (!this.checked) {
+                    overwriteIpsCheckbox.checked = false;
+                }
+            });
+        }
+
         // Select All button
         document.getElementById('select-all-btn').addEventListener('click', function() {
-            var checkboxes = document.querySelectorAll('.form-check-input');
+            var checkboxes = document.querySelectorAll('.form-check-input:not(#overwrite-ips)');
             var allChecked = Array.from(checkboxes).every(cb => cb.checked);
             checkboxes.forEach(cb => cb.checked = !allChecked);
+            // Handle overwrite-ips based on sync-interfaces state
+            if (overwriteIpsCheckbox) {
+                overwriteIpsCheckbox.disabled = !syncInterfacesCheckbox.checked;
+            }
             this.innerHTML = allChecked ?
                 '<i class="mdi mdi-checkbox-multiple-marked"></i> Select All' :
                 '<i class="mdi mdi-checkbox-multiple-blank-outline"></i> Deselect All';
@@ -597,6 +623,7 @@
                 sync_cc_series: document.getElementById('sync-cc-series') ? document.getElementById('sync-cc-series').checked : false,
                 sync_cc_role: document.getElementById('sync-cc-role') ? document.getElementById('sync-cc-role').checked : false,
                 sync_interfaces: document.getElementById('sync-interfaces') ? document.getElementById('sync-interfaces').checked : false,
+                overwrite_ips: document.getElementById('overwrite-ips') ? document.getElementById('overwrite-ips').checked : false,
                 sync_poe: document.getElementById('sync-poe') ? document.getElementById('sync-poe').checked : false
             };
 

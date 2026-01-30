@@ -109,7 +109,7 @@
                     </div>
                 </div>
                 <hr>
-                <div class="row text-center">
+                <div class="row text-center mb-3">
                     <div class="col-6">
                         <h4 class="mb-0">{{ comparison.nb_cisco_devices|default:0 }}</h4>
                         <small class="text-muted">Cisco Devices</small>
@@ -117,6 +117,18 @@
                     <div class="col-6">
                         <h4 class="mb-0">{{ comparison.nb_cisco_interfaces|default:0 }}</h4>
                         <small class="text-muted">Cisco Interfaces</small>
+                    </div>
+                </div>
+                <hr>
+                <small class="text-muted d-block mb-2">Catalyst Center Managed</small>
+                <div class="row text-center">
+                    <div class="col-6">
+                        <span class="badge text-white fs-4 px-3 py-2" style="background-color: #00bcd4;">{{ comparison.nb_cc_managed_devices|default:0 }}</span>
+                        <div class="small text-muted mt-1">With CC ID</div>
+                    </div>
+                    <div class="col-6">
+                        <span class="badge text-white fs-4 px-3 py-2" style="background-color: #00bcd4;">{{ comparison.nb_cc_tagged_devices|default:0 }}</span>
+                        <div class="small text-muted mt-1">Tagged</div>
                     </div>
                 </div>
             </div>
@@ -144,7 +156,7 @@
             </thead>
             <tbody>
                 <tr>
-                    <td><strong>Devices</strong></td>
+                    <td><strong>Devices</strong><br><small class="text-muted">(all)</small></td>
                     <td class="text-end fs-5">{{ comparison.nb_devices|default:0 }}</td>
                     <td class="text-end fs-5">{{ comparison.cc_devices|default:0 }}</td>
                     <td>
@@ -154,6 +166,20 @@
                                 <div class="progress-bar bg-success" role="progressbar" style="width: {% if device_pct > 100 %}100{% else %}{{ device_pct|default:0 }}{% endif %}%"></div>
                             </div>
                             <span class="ms-2 fw-bold text-white" style="min-width: 50px;">{{ device_pct|default:0 }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                <tr class="table-info">
+                    <td><strong>CC Managed</strong><br><small class="text-muted">(with cc_device_id)</small></td>
+                    <td class="text-end fs-5">{{ comparison.nb_cc_managed_devices|default:0 }}</td>
+                    <td class="text-end fs-5">{{ comparison.cc_devices|default:0 }}</td>
+                    <td>
+                        {% widthratio comparison.nb_cc_managed_devices comparison.cc_devices 100 as cc_device_pct %}
+                        <div class="d-flex align-items-center">
+                            <div class="progress flex-grow-1" style="height: 20px;">
+                                <div class="progress-bar" role="progressbar" style="width: {% if cc_device_pct > 100 %}100{% else %}{{ cc_device_pct|default:0 }}{% endif %}%; background-color: #00bcd4;"></div>
+                            </div>
+                            <span class="ms-2 fw-bold text-white" style="min-width: 50px;">{{ cc_device_pct|default:0 }}%</span>
                         </div>
                     </td>
                 </tr>

@@ -452,6 +452,7 @@ class SyncDeviceFromDNACView(View):
         sync_cc_series = body.get("sync_cc_series", False)
         sync_cc_role = body.get("sync_cc_role", False)
         sync_interfaces = body.get("sync_interfaces", False)
+        overwrite_ips = body.get("overwrite_ips", False)
         sync_poe = body.get("sync_poe", False)
 
         client = get_client()
@@ -629,7 +630,7 @@ class SyncDeviceFromDNACView(View):
             device_id = dnac_data.get("device_id")
             if device_id:
                 try:
-                    iface_result = self._sync_interfaces(device, client, device_id)
+                    iface_result = self._sync_interfaces(device, client, device_id, overwrite_ips=overwrite_ips)
                     changes.extend(iface_result.get("changes", []))
                 except Exception as e:
                     changes.append(f"Interfaces: error - {str(e)}")
@@ -668,6 +669,7 @@ class SyncDeviceFromDNACView(View):
     def _sync_custom_fields(self, device, dnac_data, sync_id=True, sync_series=True, sync_role=True):
         """Sync Catalyst Center custom fields. Returns list of change descriptions."""
         from django.utils import timezone
+        from extras.models import Tag
 
         changes = []
 
@@ -679,6 +681,19 @@ class SyncDeviceFromDNACView(View):
                 if current_value != new_id:
                     device.custom_field_data["cc_device_id"] = new_id
                     changes.append(f"Catalyst Center ID: {new_id[:20]}...")
+
+                # Add Catalyst Center tag when cc_device_id is synced
+                cc_tag, _ = Tag.objects.get_or_create(
+                    slug="catalyst-center",
+                    defaults={
+                        "name": "Catalyst Center",
+                        "color": "00bcd4",  # Cisco teal
+                        "description": "Device imported from or managed by Cisco Catalyst Center",
+                    },
+                )
+                if cc_tag not in device.tags.all():
+                    device.tags.add(cc_tag)
+                    changes.append("Tag: catalyst-center (added)")
 
         if sync_series:
             new_series = dnac_data.get("series")
@@ -748,9 +763,15 @@ class SyncDeviceFromDNACView(View):
 
         return {"changes": changes, "changed": changed}
 
-    def _sync_interfaces(self, device, client, device_id):
+    def _sync_interfaces(self, device, client, device_id, overwrite_ips=False):
         """
         Sync interfaces from Catalyst Center to NetBox device.
+
+        Args:
+            device: NetBox Device object
+            client: Catalyst Center client
+            device_id: Catalyst Center device ID
+            overwrite_ips: If True, remove IPs on synced interfaces that aren't in CC data
 
         Returns dict with "changes" list.
         """
@@ -785,12 +806,22 @@ class SyncDeviceFromDNACView(View):
                     filtered_interfaces.append(iface)
             cc_interfaces = filtered_interfaces
 
-        # Get existing interfaces on device
-        existing_interfaces = {iface.name: iface for iface in device.interfaces.all()}
+        # Get existing interfaces on device - build lookup with both original and normalized names
+        existing_interfaces = {}
+        for iface in device.interfaces.all():
+            existing_interfaces[iface.name] = iface
+            # Also map normalized name to interface for matching
+            normalized = self._normalize_interface_name(iface.name)
+            if normalized != iface.name:
+                existing_interfaces[normalized] = iface
 
         created_count = 0
         updated_count = 0
         skipped_count = 0
+
+        # Track interfaces and their synced IPs for overwrite mode
+        # Maps interface pk -> set of IP addresses (without prefix) synced from CC
+        synced_interface_ips = {}
 
         for cc_iface in cc_interfaces:
             iface_name = cc_iface.get("name")
@@ -800,9 +831,11 @@ class SyncDeviceFromDNACView(View):
             # Map CC interface type to NetBox type
             netbox_type = self._map_interface_type(cc_iface)
 
-            # Check if interface exists
-            if iface_name in existing_interfaces:
-                nb_iface = existing_interfaces[iface_name]
+            # Check if interface exists - try both original and normalized name
+            normalized_name = self._normalize_interface_name(iface_name)
+            nb_iface = existing_interfaces.get(iface_name) or existing_interfaces.get(normalized_name)
+
+            if nb_iface:
                 iface_updated = False
 
                 # Update type if different
@@ -864,6 +897,20 @@ class SyncDeviceFromDNACView(View):
                     updated_count += 1
                 else:
                     skipped_count += 1
+
+                # Sync IP address for existing interface (update mask if changed)
+                ip_addr = cc_iface.get("ip_address")
+                ip_mask = cc_iface.get("ip_mask")
+                if ip_addr and ip_mask:
+                    self._sync_interface_ip(nb_iface, ip_addr, ip_mask)
+                    # Track this IP for overwrite mode
+                    if nb_iface.pk not in synced_interface_ips:
+                        synced_interface_ips[nb_iface.pk] = set()
+                    synced_interface_ips[nb_iface.pk].add(ip_addr)
+                elif overwrite_ips:
+                    # Interface has no IP in CC, track for deletion
+                    if nb_iface.pk not in synced_interface_ips:
+                        synced_interface_ips[nb_iface.pk] = set()
             else:
                 # Create new interface
                 admin_status = cc_iface.get("admin_status", "").upper()
@@ -908,6 +955,10 @@ class SyncDeviceFromDNACView(View):
                 ip_mask = cc_iface.get("ip_mask")
                 if ip_addr and ip_mask:
                     self._create_interface_ip(new_iface, ip_addr, ip_mask)
+                    # Track this IP for overwrite mode (new interfaces won't have IPs to delete)
+                    if new_iface.pk not in synced_interface_ips:
+                        synced_interface_ips[new_iface.pk] = set()
+                    synced_interface_ips[new_iface.pk].add(ip_addr)
 
         # Set LAG membership for interfaces that belong to port-channels
         lag_count = 0
@@ -930,6 +981,24 @@ class SyncDeviceFromDNACView(View):
                         member_iface.save()
                         lag_count += 1
 
+        # If overwrite_ips is enabled, delete IPs on synced interfaces that aren't in CC data
+        deleted_ip_count = 0
+        if overwrite_ips and synced_interface_ips:
+            from dcim.models import Interface
+
+            for iface_pk, cc_ips in synced_interface_ips.items():
+                try:
+                    iface = Interface.objects.get(pk=iface_pk)
+                    # Get all IPs currently assigned to this interface
+                    for ip in iface.ip_addresses.all():
+                        ip_addr_str = str(ip.address.ip)  # Get IP without prefix
+                        if ip_addr_str not in cc_ips:
+                            # This IP is not in CC data - delete it
+                            ip.delete()
+                            deleted_ip_count += 1
+                except Interface.DoesNotExist:
+                    pass
+
         # Summary
         summary_parts = []
         if created_count:
@@ -945,6 +1014,10 @@ class SyncDeviceFromDNACView(View):
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
         else:
             changes.append("Interfaces: no changes")
+
+        # Add deleted IPs to changes if any
+        if deleted_ip_count:
+            changes.append(f"IPs removed: {deleted_ip_count} (not in Catalyst Center)")
 
         # Create journal entry with CC interface data
         self._create_interface_journal(device, cc_interfaces, created_count, updated_count)
@@ -1011,12 +1084,19 @@ class SyncDeviceFromDNACView(View):
             # Map CC interface type to NetBox type
             netbox_type = self._map_interface_type(cc_iface)
 
-            # Get existing interfaces on target device
-            existing_interfaces = {iface.name: iface for iface in target_device.interfaces.all()}
+            # Get existing interfaces on target device - build lookup with both original and normalized names
+            existing_interfaces = {}
+            for iface in target_device.interfaces.all():
+                existing_interfaces[iface.name] = iface
+                normalized = self._normalize_interface_name(iface.name)
+                if normalized != iface.name:
+                    existing_interfaces[normalized] = iface
 
-            # Check if interface exists
-            if iface_name in existing_interfaces:
-                nb_iface = existing_interfaces[iface_name]
+            # Check if interface exists - try both original and normalized name
+            normalized_name = self._normalize_interface_name(iface_name)
+            nb_iface = existing_interfaces.get(iface_name) or existing_interfaces.get(normalized_name)
+
+            if nb_iface:
                 iface_updated = False
 
                 # Update type if different
@@ -1078,6 +1158,12 @@ class SyncDeviceFromDNACView(View):
                     updated_count += 1
                 else:
                     skipped_count += 1
+
+                # Sync IP address for existing interface (update mask if changed)
+                ip_addr = cc_iface.get("ip_address")
+                ip_mask = cc_iface.get("ip_mask")
+                if ip_addr and ip_mask:
+                    self._sync_interface_ip(nb_iface, ip_addr, ip_mask)
 
                 # Track for LAG membership
                 device_interfaces[target_device.pk][iface_name] = nb_iface
@@ -1356,6 +1442,41 @@ class SyncDeviceFromDNACView(View):
         except (ValueError, TypeError):
             return None
 
+    def _normalize_interface_name(self, name):
+        """
+        Normalize Cisco interface name from abbreviated to full form.
+
+        Cisco devices may report abbreviated interface names (Lo0, Gi1/0/1)
+        while NetBox may have full names (Loopback0, GigabitEthernet1/0/1).
+        This normalizes to the full form for consistent matching.
+        """
+        if not name:
+            return name
+
+        import re
+
+        # Map of abbreviated prefixes to full names
+        # Order matters - check longer prefixes first
+        prefix_map = [
+            (r"^Tw(\d)", r"TwentyFiveGigE\1"),
+            (r"^Te(\d)", r"TenGigabitEthernet\1"),
+            (r"^Gi(\d)", r"GigabitEthernet\1"),
+            (r"^Fa(\d)", r"FastEthernet\1"),
+            (r"^Eth(\d)", r"Ethernet\1"),
+            (r"^Lo(\d)", r"Loopback\1"),
+            (r"^Vl(\d)", r"Vlan\1"),
+            (r"^Po(\d)", r"Port-channel\1"),
+            (r"^Tu(\d)", r"Tunnel\1"),
+            (r"^Nv(\d)", r"nve\1"),
+            (r"^mgmt(\d)", r"mgmt\1"),
+        ]
+
+        for pattern, replacement in prefix_map:
+            if re.match(pattern, name, re.IGNORECASE):
+                return re.sub(pattern, replacement, name, flags=re.IGNORECASE)
+
+        return name
+
     def _normalize_mac(self, mac_address):
         """Normalize MAC address to NetBox format (AA:BB:CC:DD:EE:FF)."""
         if not mac_address:
@@ -1393,7 +1514,19 @@ class SyncDeviceFromDNACView(View):
         return None
 
     def _create_interface_ip(self, interface, ip_addr, ip_mask):
-        """Create IP address and assign to interface."""
+        """Create IP address and assign to interface (for new interfaces)."""
+        self._sync_interface_ip(interface, ip_addr, ip_mask)
+
+    def _sync_interface_ip(self, interface, ip_addr, ip_mask):
+        """
+        Sync IP address on interface - create or update as needed.
+
+        If the IP already exists on this interface with a different prefix,
+        update the prefix. If it exists elsewhere, reassign it. If it doesn't
+        exist, create it.
+        """
+        import netaddr
+
         # Convert subnet mask to prefix length
         prefix_len = self._mask_to_prefix(ip_mask)
         if not prefix_len:
@@ -1401,21 +1534,45 @@ class SyncDeviceFromDNACView(View):
 
         ip_with_prefix = f"{ip_addr}/{prefix_len}"
 
-        # Check if IP already exists
+        # First check if this exact IP (with same prefix) already exists
         existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
         if existing_ip:
             # Update assignment if not already assigned to this interface
             if existing_ip.assigned_object != interface:
                 existing_ip.assigned_object = interface
                 existing_ip.save()
-        else:
-            # Create new IP
-            new_ip = IPAddress(
-                address=ip_with_prefix,
-                assigned_object=interface,
-                description="Synced from Catalyst Center",
-            )
-            new_ip.save()
+            return
+
+        # Check if the same IP address exists with a different prefix on this interface
+        # NetBox stores IPs as network objects, so we need to find by the IP part
+        for iface_ip in interface.ip_addresses.all():
+            # Compare the IP address part (without prefix)
+            if str(iface_ip.address.ip) == ip_addr:
+                # Same IP, different prefix - update the prefix
+                old_prefix = iface_ip.address.prefixlen
+                if old_prefix != prefix_len:
+                    # Update the address with new prefix
+                    iface_ip.address = netaddr.IPNetwork(ip_with_prefix)
+                    iface_ip.save()
+                return
+
+        # Check if IP exists elsewhere (different interface or unassigned)
+        # Search for any IP that matches the address regardless of prefix
+        for existing in IPAddress.objects.filter(address__startswith=f"{ip_addr}/"):
+            if str(existing.address.ip) == ip_addr:
+                # Found it - update prefix and reassign
+                existing.address = netaddr.IPNetwork(ip_with_prefix)
+                existing.assigned_object = interface
+                existing.save()
+                return
+
+        # IP doesn't exist at all - create new
+        new_ip = IPAddress(
+            address=ip_with_prefix,
+            assigned_object=interface,
+            description="Synced from Catalyst Center",
+        )
+        new_ip.save()
 
     def _mask_to_prefix(self, mask):
         """Convert subnet mask to prefix length."""
@@ -1767,8 +1924,19 @@ def _import_as_virtual_chassis(
     from dcim.models import Device, Interface, VirtualChassis
     from django.db import transaction
     from django.utils import timezone
+    from extras.models import Tag
 
     from .catalyst_client import get_client
+
+    # Get or create Catalyst Center tag
+    cc_tag, _ = Tag.objects.get_or_create(
+        slug="catalyst-center",
+        defaults={
+            "name": "Catalyst Center",
+            "color": "00bcd4",  # Cisco teal
+            "description": "Device imported from or managed by Cisco Catalyst Center",
+        },
+    )
 
     stack_count = dnac_device.get("stack_count", 1)
     serial_list = dnac_device.get("serial_list", [])
@@ -1824,6 +1992,9 @@ def _import_as_virtual_chassis(
                 member_device.custom_field_data["cc_role"] = dnac_device.get("role", "")
                 member_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
                 member_device.save()
+
+                # Add Catalyst Center tag
+                member_device.tags.add(cc_tag)
 
                 created_members.append(
                     {
@@ -1962,6 +2133,7 @@ class ImportDevicesView(View):
             Platform,
             Site,
         )
+        from extras.models import Tag
 
         try:
             body = json.loads(request.body) if request.body else {}
@@ -2005,6 +2177,16 @@ class ImportDevicesView(View):
         cisco_manufacturer, _ = Manufacturer.objects.get_or_create(
             slug="cisco",
             defaults={"name": "Cisco"},
+        )
+
+        # Get or create Catalyst Center tag for imported devices
+        cc_tag, _ = Tag.objects.get_or_create(
+            slug="catalyst-center",
+            defaults={
+                "name": "Catalyst Center",
+                "color": "00bcd4",  # Cisco teal
+                "description": "Device imported from or managed by Cisco Catalyst Center",
+            },
         )
 
         results = {
@@ -2214,6 +2396,9 @@ class ImportDevicesView(View):
                 new_device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
                 new_device.save()
 
+                # Add Catalyst Center tag
+                new_device.tags.add(cc_tag)
+
                 # Create a management interface (use 'other' type for management)
                 mgmt_interface = Interface(
                     device=new_device,
@@ -2365,6 +2550,8 @@ class InventoryComparisonView(View):
             # NetBox stats
             "nb_devices": 0,
             "nb_cisco_devices": 0,
+            "nb_cc_managed_devices": 0,  # Devices with cc_device_id set
+            "nb_cc_tagged_devices": 0,  # Devices with catalyst-center tag
             "nb_interfaces": 0,
             "nb_cisco_interfaces": 0,
             "nb_sites": 0,
@@ -2380,6 +2567,24 @@ class InventoryComparisonView(View):
         comparison["nb_cisco_devices"] = Device.objects.filter(
             device_type__manufacturer__in=cisco_manufacturers
         ).count()
+
+        # Count devices that are actually managed by Catalyst Center
+        # These have the cc_device_id custom field populated with a non-empty value
+        # Note: JSON null values in PostgreSQL need special handling
+        # We use a raw SQL condition to check for non-null, non-empty values
+        comparison["nb_cc_managed_devices"] = Device.objects.extra(
+            where=[
+                "custom_field_data->>'cc_device_id' IS NOT NULL",
+                "custom_field_data->>'cc_device_id' != ''",
+            ]
+        ).count()
+
+        # Count devices with catalyst-center tag
+        from extras.models import Tag
+        cc_tag = Tag.objects.filter(slug="catalyst-center").first()
+        if cc_tag:
+            comparison["nb_cc_tagged_devices"] = Device.objects.filter(tags=cc_tag).count()
+
         comparison["nb_interfaces"] = Interface.objects.count()
         comparison["nb_cisco_interfaces"] = Interface.objects.filter(
             device__device_type__manufacturer__in=cisco_manufacturers
