@@ -2581,6 +2581,7 @@ class InventoryComparisonView(View):
 
         # Count devices with catalyst-center tag
         from extras.models import Tag
+
         cc_tag = Tag.objects.filter(slug="catalyst-center").first()
         if cc_tag:
             comparison["nb_cc_tagged_devices"] = Device.objects.filter(tags=cc_tag).count()
