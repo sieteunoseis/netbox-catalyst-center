@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-01-30
+
+### Added
+
+- **Transceiver/SFP Sync as Inventory Items** (Closes #11)
+  - Syncs transceiver data from Catalyst Center `equipment` API as NetBox Inventory Items
+  - Stores: product ID (e.g., `SFP-10G-LR`), serial number, manufacturer
+  - Links each transceiver to its interface via `component` field
+  - Normalizes manufacturer names (e.g., `CISCO-AVAGO` → `Cisco`)
+  - Works with both standalone devices and Virtual Chassis members
+  - Uses Inventory Items approach per [NetBoxLabs best practices](https://netboxlabs.com/blog/sfp-modeling-modules-over-inventory-items/) for sync-from-external-source workflows
+
+- **Subinterface Parent Relationships**
+  - Automatically sets `parent` field on subinterfaces (e.g., `TenGigabitEthernet1/1/8.2012` → `TenGigabitEthernet1/1/8`)
+  - Works during interface sync for both standalone and Virtual Chassis devices
+
+- **TwoGigabitEthernet Interface Support** (Closes #10)
+  - Added mapping for `TwoGigabitEthernet` interfaces to `2.5gbase-t` NetBox type
+
+### Fixed
+
+- **Interface Speed Mapping** - Catalyst Center API returns speed in kbps (not bps); removed incorrect `/1000` division
+- **Subinterface VC Member Assignment** - Physical subinterfaces (e.g., `TenGigabitEthernet2/1/8.3012`) now correctly assigned to member 2 based on base interface slot number
+- **Virtual Chassis Device Type Sync** (Closes #9) - Member devices now correctly sync device type from Catalyst Center platform ID
+
 ## [1.3.1] - 2026-01-26
 
 ### Fixed
@@ -177,7 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10+ required
 - Apache 2.0 license
 
-[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.5...HEAD
+[1.3.5]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.1...v1.3.5
 [1.3.1]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/sieteunoseis/netbox-catalyst-center/compare/v1.2.2...v1.2.3

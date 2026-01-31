@@ -270,13 +270,31 @@ class CatalystCenterClient:
             all_devices = cache.get(all_devices_cache_key)
 
             if not all_devices:
-                # Fetch all devices from DNAC (no filter)
+                # Fetch all devices from DNAC with pagination (default limit is 500)
                 logger.debug("Fetching all devices from DNAC for local filtering")
-                result = self._make_request(endpoint)
-                if "error" not in result:
-                    all_devices = result.get("response", [])
+                all_devices = []
+                offset = 0
+                page_size = 500
+                max_pages = 20  # Safety limit: 10,000 devices max
+
+                for _ in range(max_pages):
+                    params = {"offset": offset, "limit": page_size}
+                    page_result = self._make_request(endpoint, params)
+                    if "error" in page_result:
+                        break
+                    page_devices = page_result.get("response", [])
+                    if not page_devices:
+                        break
+                    all_devices.extend(page_devices)
+                    logger.debug(f"Fetched page at offset {offset}: {len(page_devices)} devices")
+                    if len(page_devices) < page_size:
+                        break  # Last page
+                    offset += page_size
+
+                if all_devices:
                     # Cache for 5 minutes to avoid repeated full fetches
                     cache.set(all_devices_cache_key, all_devices, 300)
+                    logger.debug(f"Cached {len(all_devices)} total devices")
 
             if all_devices:
                 # Filter locally with case-insensitive matching
@@ -689,6 +707,87 @@ class CatalystCenterClient:
         cache.set(cache_key, poe_info, cache_timeout)
 
         return poe_info
+
+    def get_device_equipment(self, device_id):
+        """
+        Get equipment/transceiver details for a device.
+
+        This returns information about installed SFP modules, line cards,
+        and other equipment that can help determine interface media types.
+
+        Args:
+            device_id: The Catalyst Center device UUID
+
+        Returns:
+            dict with "equipment" array or "error"
+        """
+        if not device_id:
+            return {"error": "No device ID provided"}
+
+        # Check cache
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_equipment_{device_id}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        endpoint = f"/dna/intent/api/v1/network-device/{device_id}/equipment"
+        result = self._make_request(endpoint)
+
+        if "error" in result:
+            return result
+
+        equipment_list = result.get("response", [])
+
+        # Parse equipment data, focusing on transceivers
+        equipment = []
+        transceivers = {}  # Map interface name to transceiver info
+
+        for eq in equipment_list:
+            name = eq.get("name", "")
+            description = eq.get("description", "")
+            product_id = eq.get("productId", "")
+            vendor_type = eq.get("vendorEquipmentType", "")
+
+            eq_data = {
+                "name": name,
+                "description": description,
+                "product_id": product_id,
+                "vendor_type": vendor_type,
+                "serial_number": eq.get("serialNumber", ""),
+                "manufacturer": eq.get("manufacturer", ""),
+            }
+            equipment.append(eq_data)
+
+            # If this is a transceiver (has interface name pattern), index it
+            # Transceivers have names like "TenGigabitEthernet1/1/8" not "Container"
+            if product_id and "Container" not in name:
+                # Check if name looks like an interface
+                if any(x in name for x in ["Ethernet", "Gigabit", "Channel"]):
+                    transceivers[name] = {
+                        "product_id": product_id,
+                        "description": description,
+                        "vendor_type": vendor_type,
+                        "manufacturer": eq.get("manufacturer", ""),
+                        "serial_number": eq.get("serialNumber", ""),
+                    }
+
+        equipment_info = {
+            "device_id": device_id,
+            "equipment": equipment,
+            "transceivers": transceivers,
+            "equipment_count": len(equipment),
+            "transceiver_count": len(transceivers),
+            "cached": False,
+        }
+
+        # Cache the result
+        cache.set(cache_key, equipment_info, cache_timeout)
+
+        return equipment_info
 
     def _detect_stack(self, device):
         """

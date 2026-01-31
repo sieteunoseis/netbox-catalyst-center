@@ -7,9 +7,10 @@ Provides settings configuration UI.
 
 import re
 
-from dcim.models import Device
+from dcim.models import Device, InventoryItem, Manufacturer
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.contenttypes.models import ContentType
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views import View
@@ -151,6 +152,7 @@ def parse_interface_stack_member(interface_name):
 
     # Logical/shared interfaces go to master (return None)
     # These are interfaces that don't belong to a specific stack member
+    # Note: AppGigabitEthernet is NOT in this list - it has member numbers (e.g., AppGigabitEthernet1/0/1)
     logical_prefixes = (
         "vlan",
         "loopback",
@@ -162,7 +164,6 @@ def parse_interface_stack_member(interface_name):
         "null",
         "mgmt",
         "management",
-        "appgigabitethernet",  # App interfaces on controllers
         "stackport",  # Stack interconnect ports
         "stacksub",  # Stack sub-interfaces
         "cpu",  # CPU interfaces
@@ -182,14 +183,14 @@ def parse_interface_stack_member(interface_name):
     if any(iface_lower.startswith(prefix) for prefix in logical_prefixes):
         return None
 
-    # Subinterfaces (contain a dot) also go to master
-    if "." in interface_name:
-        return None
+    # For subinterfaces (contain a dot), extract the base interface name
+    # Physical subinterfaces like TenGigabitEthernet2/1/8.3012 should go to member 2
+    base_name = interface_name.split(".")[0] if "." in interface_name else interface_name
 
     # Physical interface pattern: InterfaceType<member>/<module>/<port>
     # Examples: GigabitEthernet1/0/1, TenGigabitEthernet2/1/1, FastEthernet1/0/1
     # The pattern captures the first number after the interface type name
-    match = re.match(r"^[A-Za-z]+(\d+)/", interface_name)
+    match = re.match(r"^[A-Za-z]+(\d+)/", base_name)
     if match:
         return int(match.group(1))
 
@@ -790,6 +791,10 @@ class SyncDeviceFromDNACView(View):
             changes.append("Interfaces: none found in CC")
             return {"changes": changes}
 
+        # Fetch equipment/transceiver data for accurate interface type detection
+        equipment_result = client.get_device_equipment(device_id)
+        transceivers = equipment_result.get("transceivers", {}) if "error" not in equipment_result else {}
+
         # For VC members, filter interfaces to only those belonging to this member
         if device.virtual_chassis and device.vc_position:
             member_num = device.vc_position
@@ -828,8 +833,9 @@ class SyncDeviceFromDNACView(View):
             if not iface_name:
                 continue
 
-            # Map CC interface type to NetBox type
-            netbox_type = self._map_interface_type(cc_iface)
+            # Map CC interface type to NetBox type, using transceiver data if available
+            transceiver = transceivers.get(iface_name)
+            netbox_type = self._map_interface_type(cc_iface, transceiver=transceiver)
 
             # Check if interface exists - try both original and normalized name
             normalized_name = self._normalize_interface_name(iface_name)
@@ -1010,6 +1016,29 @@ class SyncDeviceFromDNACView(View):
         if lag_count:
             summary_parts.append(f"{lag_count} LAG members set")
 
+        # Set parent relationships for subinterfaces (e.g., Gi1/0/1.100 -> Gi1/0/1)
+        parent_count = 0
+        all_interfaces = {iface.name: iface for iface in device.interfaces.all()}
+
+        for iface in device.interfaces.filter(name__contains="."):
+            # Extract parent interface name (everything before the dot)
+            parent_name = iface.name.split(".")[0]
+            parent_iface = all_interfaces.get(parent_name)
+
+            if parent_iface and iface.parent != parent_iface:
+                iface.parent = parent_iface
+                iface.save()
+                parent_count += 1
+
+        if parent_count:
+            summary_parts.append(f"{parent_count} parent relationships set")
+
+        # Sync transceivers as InventoryItems
+        if transceivers:
+            transceiver_count = self._sync_transceivers(device, transceivers)
+            if transceiver_count:
+                summary_parts.append(f"{transceiver_count} transceivers synced")
+
         if summary_parts:
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
         else:
@@ -1057,6 +1086,10 @@ class SyncDeviceFromDNACView(View):
             changes.append("Interfaces: none found in CC")
             return {"changes": changes}
 
+        # Fetch equipment/transceiver data for accurate interface type detection
+        equipment_result = client.get_device_equipment(device_id)
+        transceivers = equipment_result.get("transceivers", {}) if "error" not in equipment_result else {}
+
         created_count = 0
         updated_count = 0
         skipped_count = 0
@@ -1072,6 +1105,10 @@ class SyncDeviceFromDNACView(View):
             # Determine which device this interface belongs to
             member_num = parse_interface_stack_member(iface_name)
 
+            import logging
+
+            logger = logging.getLogger(__name__)
+
             if member_num is None:
                 # Logical interface goes to master
                 target_device = master_device
@@ -1079,10 +1116,18 @@ class SyncDeviceFromDNACView(View):
                 target_device = member_devices[member_num]
             else:
                 # Interface references a member we don't have - assign to master
+                logger.warning(
+                    f"VC Sync - Interface {iface_name} has member_num={member_num} but member_devices only has keys {list(member_devices.keys())}. Assigning to master."
+                )
                 target_device = master_device
 
-            # Map CC interface type to NetBox type
-            netbox_type = self._map_interface_type(cc_iface)
+            # Log all member 2 interfaces to debug the distribution issue
+            if member_num == 2:
+                logger.warning(f"VC Sync MEMBER2 - {iface_name}: target={target_device.name} (pk={target_device.pk})")
+
+            # Map CC interface type to NetBox type, using transceiver data if available
+            transceiver = transceivers.get(iface_name)
+            netbox_type = self._map_interface_type(cc_iface, transceiver=transceiver)
 
             # Get existing interfaces on target device - build lookup with both original and normalized names
             existing_interfaces = {}
@@ -1251,6 +1296,36 @@ class SyncDeviceFromDNACView(View):
         if lag_count:
             summary_parts.append(f"{lag_count} LAG members set")
 
+        # Set parent relationships for subinterfaces (e.g., Gi1/0/1.100 -> Gi1/0/1)
+        parent_count = 0
+        for member_device in member_devices.values():
+            # Build lookup of all interfaces on this device
+            all_interfaces = {iface.name: iface for iface in member_device.interfaces.all()}
+
+            for iface in member_device.interfaces.filter(name__contains="."):
+                # Extract parent interface name (everything before the dot)
+                parent_name = iface.name.split(".")[0]
+                parent_iface = all_interfaces.get(parent_name)
+
+                if parent_iface and iface.parent != parent_iface:
+                    iface.parent = parent_iface
+                    iface.save()
+                    parent_count += 1
+
+        if parent_count:
+            summary_parts.append(f"{parent_count} parent relationships set")
+
+        # Sync transceivers as InventoryItems for each member device
+        if transceivers:
+            transceiver_count = 0
+            for member_device in member_devices.values():
+                # Filter transceivers for this member's interfaces
+                member_iface_names = {iface.name for iface in member_device.interfaces.all()}
+                member_transceivers = {name: data for name, data in transceivers.items() if name in member_iface_names}
+                transceiver_count += self._sync_transceivers(member_device, member_transceivers)
+            if transceiver_count:
+                summary_parts.append(f"{transceiver_count} transceivers synced")
+
         if summary_parts:
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
         else:
@@ -1310,12 +1385,18 @@ class SyncDeviceFromDNACView(View):
 
             logging.getLogger(__name__).warning(f"Failed to create journal entry: {e}")
 
-    def _map_interface_type(self, cc_iface):
+    def _map_interface_type(self, cc_iface, transceiver=None):
         """Map Catalyst Center interface to NetBox interface type.
 
-        Priority: name-based detection first (definitive), then speed-based fallback.
-        Interface names like FortyGigabitEthernet are definitive regardless of
-        current negotiated speed (which may be low if port is disconnected).
+        Priority:
+        1. Virtual interface detection (subinterfaces, VLANs, loopbacks, etc.)
+        2. Transceiver-based detection (if available) - most accurate for SFP ports
+        3. Name-based detection (interface names are definitive for port capability)
+        4. Speed-based fallback
+
+        Args:
+            cc_iface: Interface data from Catalyst Center
+            transceiver: Optional transceiver data dict with product_id, description
         """
         name = cc_iface.get("name", "").lower()
         iface_type = cc_iface.get("interface_type", "").lower()
@@ -1359,26 +1440,59 @@ class SyncDeviceFromDNACView(View):
         if name.startswith("bluetooth"):
             return "ieee802.15.1"
 
-        # Name-based detection FIRST (interface names are definitive)
+        # Helper to detect copper transceiver from product_id
+        def is_copper_transceiver(xcvr):
+            if not xcvr:
+                return None  # Unknown
+            product_id = xcvr.get("product_id", "").upper()
+            description = xcvr.get("description", "").upper()
+            # Copper transceivers have -T suffix (e.g., SFP-10G-T, SFP-GE-T)
+            if "-T" in product_id or "BASE-T" in description or "COPPER" in description:
+                return True
+            # Fiber indicators: -LR, -SR, -ER, -ZR, -LRM, -LX, -SX, etc.
+            fiber_indicators = ["-LR", "-SR", "-ER", "-ZR", "-LRM", "-LX", "-SX", "-CX", "-AOC"]
+            if any(ind in product_id for ind in fiber_indicators):
+                return False
+            return None  # Can't determine
+
+        # Name-based detection with transceiver override for media type
         # Extract the interface type prefix before any numbers
         name_prefix = re.sub(r"\d.*", "", name)  # Remove from first digit onwards
 
         # Check for specific high-speed interface types by name
-        # These names definitively identify the port type regardless of negotiated speed
-        if name_prefix in ("hundredgigabitethernet", "hundredgige", "hu"):
+        # These names definitively identify the port SPEED regardless of negotiated speed
+        # Transceiver data determines fiber vs copper when available
+        # Note: Short prefixes (hu, fo, fi, etc.) are avoided as they could be ambiguous
+        # Well-established Cisco abbreviations (te, gi, fa) are kept as they're standard
+
+        # Check transceiver for copper detection
+        copper = is_copper_transceiver(transceiver)
+
+        if name_prefix in ("hundredgigabitethernet", "hundredgige"):
+            if copper:
+                return "100gbase-t"  # Rare but exists
             return "100gbase-x-qsfp28"
-        elif name_prefix in ("fortygigabitethernet", "fortygige", "fo"):
+        elif name_prefix in ("fortygigabitethernet", "fortygige"):
+            if copper:
+                return "40gbase-x-qsfpp"  # No common copper 40G
             return "40gbase-x-qsfpp"
-        elif name_prefix in ("twentyfivegigabitethernet", "twentyfivegige", "twe"):
+        elif name_prefix in ("twentyfivegigabitethernet", "twentyfivegige"):
+            if copper:
+                return "25gbase-x-sfp28"  # No common copper 25G
             return "25gbase-x-sfp28"
         elif name_prefix in ("tengigabitethernet", "tengige", "te"):
+            if copper:
+                return "10gbase-t"
             return "10gbase-x-sfpp"
-        elif name_prefix in ("fivegigabitethernet", "fivegige", "fi"):
-            return "5gbase-t"
-        elif name_prefix in ("twopointfivegigabitethernet", "twogige", "two"):
-            return "2.5gbase-t"
+        elif name_prefix in ("fivegigabitethernet", "fivegige"):
+            return "5gbase-t"  # 5G is typically copper
+        elif name_prefix in ("twogigabitethernet", "twopointfivegigabitethernet", "twogige"):
+            return "2.5gbase-t"  # 2.5G is typically copper
         elif name_prefix in ("gigabitethernet", "gi", "ge"):
-            return "1000base-t"
+            # GigabitEthernet could be copper or fiber SFP
+            if copper is False:  # Explicitly fiber
+                return "1000base-x-sfp"
+            return "1000base-t"  # Default to copper for GigE
         elif name_prefix in ("fastethernet", "fa"):
             return "100base-tx"
 
@@ -1394,6 +1508,10 @@ class SyncDeviceFromDNACView(View):
                     return "25gbase-x-sfp28"
                 elif speed_int >= 10000000000:  # 10G
                     return "10gbase-x-sfpp"
+                elif speed_int >= 5000000000:  # 5G
+                    return "5gbase-t"
+                elif speed_int >= 2500000000:  # 2.5G
+                    return "2.5gbase-t"
                 elif speed_int >= 1000000000:  # 1G
                     return "1000base-t"
                 elif speed_int >= 100000000:  # 100M
@@ -1423,13 +1541,17 @@ class SyncDeviceFromDNACView(View):
             return "auto"
         return None
 
-    def _convert_speed_to_kbps(self, speed_bps):
-        """Convert speed from bps (string) to kbps (int)."""
-        if not speed_bps:
+    def _convert_speed_to_kbps(self, speed_value):
+        """
+        Convert speed from Catalyst Center API to kbps (int).
+
+        Note: Catalyst Center API returns speed in kbps (e.g., 1000000 for 1G,
+        10000000 for 10G, 40000000 for 40G). We just need to convert to int.
+        """
+        if not speed_value:
             return None
         try:
-            bps = int(speed_bps)
-            return bps // 1000  # Convert bps to kbps
+            return int(speed_value)
         except (ValueError, TypeError):
             return None
 
@@ -1587,6 +1709,104 @@ class SyncDeviceFromDNACView(View):
             return binary.count("1")
         except (ValueError, AttributeError):
             return None
+
+    def _sync_transceivers(self, device, transceivers):
+        """
+        Sync transceiver data as InventoryItems linked to interfaces.
+
+        Creates or updates InventoryItems for each transceiver, with the interface
+        as the component. This allows tracking SFP modules (part number, serial,
+        manufacturer) in NetBox.
+
+        Args:
+            device: The NetBox device
+            transceivers: Dict mapping interface names to transceiver data
+                         e.g. {"TenGigabitEthernet1/1/8": {"product_id": "SFP-10G-LR", ...}}
+
+        Returns:
+            int: Number of transceivers synced (created + updated)
+        """
+        if not transceivers:
+            return 0
+
+        from dcim.models import Interface
+
+        interface_ct = ContentType.objects.get_for_model(Interface)
+        synced_count = 0
+
+        # Build lookup of all interfaces on this device
+        interfaces_by_name = {iface.name: iface for iface in device.interfaces.all()}
+
+        # Map CC manufacturer names to normalized names
+        manufacturer_cache = {}
+
+        for iface_name, xcvr_data in transceivers.items():
+            interface = interfaces_by_name.get(iface_name)
+            if not interface:
+                continue
+
+            product_id = xcvr_data.get("product_id", "")
+            serial = xcvr_data.get("serial_number", "")
+            mfg_name = xcvr_data.get("manufacturer", "")
+            description = xcvr_data.get("description", "")
+
+            if not product_id:
+                continue
+
+            # Get or create manufacturer
+            manufacturer = None
+            if mfg_name:
+                # Normalize manufacturer name (CISCO-AVAGO -> Cisco, FS -> FS)
+                normalized_mfg = mfg_name.split("-")[0].title() if "-" in mfg_name else mfg_name
+                if normalized_mfg not in manufacturer_cache:
+                    mfg_slug = normalized_mfg.lower().replace(" ", "-")
+                    manufacturer, _ = Manufacturer.objects.get_or_create(
+                        slug=mfg_slug, defaults={"name": normalized_mfg}
+                    )
+                    manufacturer_cache[normalized_mfg] = manufacturer
+                else:
+                    manufacturer = manufacturer_cache[normalized_mfg]
+
+            # Check for existing InventoryItem on this interface
+            existing = InventoryItem.objects.filter(
+                device=device, component_type=interface_ct, component_id=interface.id
+            ).first()
+
+            if existing:
+                # Update if changed
+                updated = False
+                if existing.part_id != product_id:
+                    existing.part_id = product_id
+                    updated = True
+                if serial and existing.serial != serial:
+                    existing.serial = serial
+                    updated = True
+                if manufacturer and existing.manufacturer != manufacturer:
+                    existing.manufacturer = manufacturer
+                    updated = True
+                if description and existing.description != description:
+                    existing.description = description
+                    updated = True
+                if updated:
+                    existing.save()
+                    synced_count += 1
+            else:
+                # Create new InventoryItem
+                inv_item = InventoryItem(
+                    device=device,
+                    name=product_id,
+                    component_type=interface_ct,
+                    component_id=interface.id,
+                    manufacturer=manufacturer,
+                    part_id=product_id,
+                    serial=serial or "",
+                    description=description or "",
+                    discovered=True,  # Mark as auto-discovered
+                )
+                inv_item.save()
+                synced_count += 1
+
+        return synced_count
 
     def _sync_poe(self, device, client, device_id):
         """
@@ -1906,7 +2126,7 @@ def _import_as_virtual_chassis(
     Args:
         dnac_device: Device data from Catalyst Center
         hostname_base: Base hostname for the chassis
-        device_type: NetBox DeviceType object
+        device_type: NetBox DeviceType object (fallback if platform_list unavailable)
         role: NetBox DeviceRole object
         default_site: NetBox Site object
         device_platform: NetBox Platform object (or None)
@@ -1921,7 +2141,7 @@ def _import_as_virtual_chassis(
             - poe_count: Total POE interfaces updated
             - error: Error message if failed
     """
-    from dcim.models import Device, Interface, VirtualChassis
+    from dcim.models import Device, DeviceType, Interface, Manufacturer, VirtualChassis
     from django.db import transaction
     from django.utils import timezone
     from extras.models import Tag
@@ -1940,12 +2160,19 @@ def _import_as_virtual_chassis(
 
     stack_count = dnac_device.get("stack_count", 1)
     serial_list = dnac_device.get("serial_list", [])
+    platform_list = dnac_device.get("platform_list", [])
     management_ip = dnac_device.get("management_ip", "")
     device_id = dnac_device.get("device_id", "")
 
     # Ensure we have enough serials for all members
     while len(serial_list) < stack_count:
         serial_list.append("")
+
+    # Get Cisco manufacturer for creating device types per member
+    cisco_manufacturer, _ = Manufacturer.objects.get_or_create(
+        slug="cisco",
+        defaults={"name": "Cisco"},
+    )
 
     created_members = []
     master_device = None
@@ -1963,6 +2190,21 @@ def _import_as_virtual_chassis(
                 member_name = f"{hostname_base}.{member_num}"
                 member_serial = serial_list[member_num - 1] if member_num <= len(serial_list) else ""
 
+                # Get the platform for this specific member from platform_list
+                # Use the platform at the corresponding index (member_num - 1)
+                # Fall back to the passed device_type if platform_list doesn't have enough entries
+                if platform_list and member_num <= len(platform_list):
+                    member_platform = platform_list[member_num - 1]
+                    member_device_type, _ = DeviceType.objects.get_or_create(
+                        manufacturer=cisco_manufacturer,
+                        model=member_platform,
+                        defaults={
+                            "slug": member_platform.lower().replace(" ", "-").replace("/", "-"),
+                        },
+                    )
+                else:
+                    member_device_type = device_type
+
                 # Check if this member already exists
                 existing = Device.objects.filter(name__iexact=member_name).first()
                 if existing:
@@ -1970,7 +2212,7 @@ def _import_as_virtual_chassis(
 
                 member_device = Device(
                     name=member_name,
-                    device_type=device_type,
+                    device_type=member_device_type,
                     role=role,
                     site=default_site,
                     serial=member_serial,
@@ -2002,6 +2244,7 @@ def _import_as_virtual_chassis(
                         "netbox_id": member_device.pk,
                         "serial": member_serial,
                         "vc_position": member_num,
+                        "device_type": member_device_type.model,
                     }
                 )
 
@@ -2056,6 +2299,14 @@ def _import_as_virtual_chassis(
                 try:
                     # Build a device lookup for each member by position
                     member_devices = {d.vc_position: d for d in Device.objects.filter(virtual_chassis=vc)}
+
+                    # Debug logging
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"VC Import - member_devices keys: {list(member_devices.keys())}")
+                    for pos, dev in member_devices.items():
+                        logger.info(f"VC Import - Position {pos}: {dev.name} (pk={dev.pk})")
 
                     sync_view = SyncDeviceFromDNACView()
                     iface_result = sync_view._sync_interfaces_virtual_chassis(
