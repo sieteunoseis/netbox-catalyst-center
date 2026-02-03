@@ -1,0 +1,674 @@
+{% load helpers %}
+
+{% if error %}
+<div class="alert alert-warning">
+    <i class="mdi mdi-alert"></i> {{ error }}
+</div>
+{% elif client_data %}
+<div class="row">
+    <!-- Reachability Status Card -->
+    <div class="col-md-4 mb-3">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-lan-connect"></i> Reachability Status
+                </h5>
+            </div>
+            <div class="card-body text-center">
+                {% if client_data.connected %}
+                <div class="p-3 mb-2 bg-success rounded">
+                    <span class="text-white fs-3 fw-bold">
+                        <i class="mdi mdi-check-circle"></i> Reachable
+                    </span>
+                </div>
+                {% else %}
+                <div class="p-3 mb-2 bg-danger rounded">
+                    <span class="text-white fs-3 fw-bold">
+                        <i class="mdi mdi-close-circle"></i> {{ client_data.connection_status|default:"Unreachable" }}
+                    </span>
+                </div>
+                {% if client_data.reachability_failure_reason %}
+                <div class="text-muted small mt-2">
+                    {{ client_data.reachability_failure_reason }}
+                </div>
+                {% endif %}
+                {% endif %}
+
+                {% if client_data.collection_status %}
+                <div class="mt-3">
+                    {% if client_data.collection_status == "Managed" %}
+                    <span class="badge" style="background-color: #0d6efd; color: white;">{{ client_data.collection_status }}</span>
+                    {% elif client_data.collection_status == "In Progress" %}
+                    <span class="badge" style="background-color: #ffc107; color: #212529;">{{ client_data.collection_status }}</span>
+                    {% elif client_data.collection_status == "Partial Collection Failure" or client_data.collection_status == "Could Not Synchronize" %}
+                    <span class="badge bg-danger text-white">{{ client_data.collection_status }}</span>
+                    {% else %}
+                    <span class="badge" style="background-color: #6c757d; color: white;">{{ client_data.collection_status }}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if client_data.uptime %}
+                <div class="mt-3">
+                    <span class="fs-6 text-muted">Uptime:</span>
+                    <div class="fs-5 fw-bold">{{ client_data.uptime }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Details Card -->
+    <div class="col-md-4 mb-3">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-router"></i> Device Details
+                    {% if client_data.is_stack %}
+                    <span class="badge bg-info text-dark ms-2" title="StackWise / Virtual Chassis">
+                        <i class="mdi mdi-layers-triple"></i> Stack ({{ client_data.stack_count }})
+                    </span>
+                    {% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tr>
+                        <th>Hostname:</th>
+                        <td><code>{{ client_data.hostname }}</code></td>
+                    </tr>
+                    <tr>
+                        <th>Management IP:</th>
+                        <td>
+                            {% if client_data.management_ip %}
+                            <code>{{ client_data.management_ip }}</code>
+                            {% else %}
+                            <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Serial Number{% if client_data.is_stack %}s{% endif %}:</th>
+                        <td>
+                            {% if client_data.is_stack and client_data.serial_list %}
+                            {% for serial in client_data.serial_list %}
+                            <div class="{% if not forloop.first %}mt-1{% endif %}"><span class="badge bg-dark text-white">{{ forloop.counter }}</span> <code>{{ serial }}</code></div>
+                            {% endfor %}
+                            {% else %}
+                            {{ client_data.serial_number|default:"N/A" }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>MAC Address:</th>
+                        <td>
+                            {% if client_data.mac_address %}
+                            <code>{{ client_data.mac_address }}</code>
+                            {% else %}
+                            <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% if client_data.role %}
+                    <tr>
+                        <th>Role:</th>
+                        <td>{{ client_data.role }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Software & Platform Card -->
+    <div class="col-md-4 mb-3">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-cog"></i> Software & Platform
+                </h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tr>
+                        <th>Software Version:</th>
+                        <td><code>{{ client_data.software_version|default:"N/A" }}</code></td>
+                    </tr>
+                    {% if client_data.software_type %}
+                    <tr>
+                        <th>Software Type:</th>
+                        <td>{{ client_data.software_type }}</td>
+                    </tr>
+                    {% endif %}
+                    <tr>
+                        <th>Platform:</th>
+                        <td>
+                            {% if client_data.is_stack and client_data.platform_list|length > 1 %}
+                            {% for plat in client_data.platform_list %}
+                            <div class="{% if not forloop.first %}mt-1{% endif %}"><span class="badge bg-dark text-white">{{ forloop.counter }}</span> <strong>{{ plat }}</strong></div>
+                            {% endfor %}
+                            {% else %}
+                            {{ client_data.platform|default:"N/A" }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Series:</th>
+                        <td>{{ client_data.series|default:"N/A" }}</td>
+                    </tr>
+                    <tr>
+                        <th>Device Family:</th>
+                        <td>{{ client_data.device_family|default:"N/A" }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Location & SNMP Card -->
+{% if client_data.snmp_location or client_data.snmp_contact %}
+<div class="row">
+    <div class="col-12 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-map-marker"></i> Location & Contact
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% if client_data.snmp_location %}
+                    <div class="col-md-8">
+                        <strong>SNMP Location:</strong>
+                        <div class="mt-1">{{ client_data.snmp_location }}</div>
+                    </div>
+                    {% endif %}
+                    {% if client_data.snmp_contact %}
+                    <div class="col-md-4">
+                        <strong>SNMP Contact:</strong>
+                        <div class="mt-1">{{ client_data.snmp_contact }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Boot Time & Last Updated -->
+{% if client_data.boot_time or client_data.last_updated %}
+<div class="row">
+    <div class="col-12 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-clock-outline"></i> Timestamps
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% if client_data.boot_time %}
+                    <div class="col-md-6">
+                        <strong>Boot Time:</strong>
+                        <div class="mt-1 text-muted">{{ client_data.boot_time }}</div>
+                    </div>
+                    {% endif %}
+                    {% if client_data.last_updated %}
+                    <div class="col-md-6">
+                        <strong>Last Updated in Catalyst Center:</strong>
+                        <div class="mt-1 text-muted">{{ client_data.last_updated }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Compliance & Security Row -->
+{% if client_data.compliance or client_data.advisories %}
+<div class="row">
+    <!-- Compliance Status Card -->
+    {% if client_data.compliance %}
+    <div class="col-md-6 mb-3">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-clipboard-check"></i> Compliance Status
+                    {% if client_data.compliance.overall_status == "NON_COMPLIANT" %}
+                    <span class="badge bg-danger text-white ms-2">Non-Compliant</span>
+                    {% else %}
+                    <span class="badge bg-success text-white ms-2">Compliant</span>
+                    {% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in client_data.compliance.compliance_records %}
+                        <tr>
+                            <td>{{ record.type }}</td>
+                            <td>
+                                {% if record.status == "COMPLIANT" %}
+                                <span class="badge bg-success text-white">Compliant</span>
+                                {% elif record.status == "NON_COMPLIANT" %}
+                                <span class="badge bg-danger text-white">Non-Compliant</span>
+                                {% elif record.status == "NOT_APPLICABLE" %}
+                                <span class="badge bg-secondary text-white">N/A</span>
+                                {% elif record.status == "IN_PROGRESS" %}
+                                <span class="badge bg-warning text-dark">In Progress</span>
+                                {% else %}
+                                <span class="badge bg-secondary text-white">{{ record.status }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="2" class="text-muted">No compliance data available</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Security Advisories Card -->
+    {% if client_data.advisories %}
+    <div class="col-md-6 mb-3">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-shield-alert"></i> Security Advisories (PSIRT)
+                    {% if client_data.advisories.advisory_count > 0 %}
+                    <span class="badge bg-warning text-dark ms-2">{{ client_data.advisories.advisory_count }} Advisory{{ client_data.advisories.advisory_count|pluralize:",ies" }}</span>
+                    {% else %}
+                    <span class="badge bg-success text-white ms-2">No Advisories</span>
+                    {% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if client_data.advisories.advisory_count > 0 %}
+                <div class="mb-2">
+                    <small class="text-muted">
+                        Scan Status: <span class="badge bg-info text-dark">{{ client_data.advisories.scan_status }}</span>
+                    </small>
+                </div>
+                <div style="max-height: 200px; overflow-y: auto;">
+                    <ul class="list-unstyled mb-0">
+                        {% for advisory_id in client_data.advisories.advisory_ids %}
+                        <li class="mb-1">
+                            <a href="https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/{{ advisory_id }}" target="_blank" class="text-decoration-none">
+                                <i class="mdi mdi-open-in-new"></i> {{ advisory_id }}
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% if client_data.advisories.hidden_count > 0 %}
+                <div class="mt-2 text-muted small">
+                    <i class="mdi mdi-eye-off"></i> {{ client_data.advisories.hidden_count }} hidden advisory{{ client_data.advisories.hidden_count|pluralize:",ies" }}
+                </div>
+                {% endif %}
+                {% else %}
+                <div class="text-success">
+                    <i class="mdi mdi-check-circle"></i> No security advisories affect this device
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Cache indicator -->
+{% if client_data.cached %}
+<div class="text-muted small mt-2">
+    <i class="mdi mdi-cached"></i> Data from cache
+</div>
+{% endif %}
+
+{% else %}
+<div class="alert alert-info">
+    <i class="mdi mdi-information"></i> No device data available from Catalyst Center. The device may not be in the inventory.
+</div>
+{% endif %}
+
+<!-- Sync from DNAC Section -->
+{% if client_data %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-sync"></i> Sync from Catalyst Center
+        </h5>
+    </div>
+    <div class="card-body">
+        <style>
+            .sync-field { margin-bottom: 0.5rem; }
+            .sync-field.synced .form-check-label { color: #198754; }
+        </style>
+        <p class="text-muted small mb-2">Select fields to sync from Catalyst Center to NetBox. <span class="text-success"><i class="mdi mdi-check-circle"></i> = already synced</span></p>
+        <div class="row">
+            <div class="col-md-4">
+                <h6 class="text-muted mb-2">Basic Fields</h6>
+                {% if client_data.management_ip %}
+                {% with current_ip=object.primary_ip4.address.ip|default:"" new_ip=client_data.management_ip %}
+                <div class="form-check sync-field {% if current_ip|stringformat:'s' == new_ip %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-ip" {% if current_ip|stringformat:'s' != new_ip %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-ip">
+                        <strong>Primary IP</strong>
+                        {% if current_ip|stringformat:'s' == new_ip %}
+                        <i class="mdi mdi-check-circle text-success"></i>
+                        {% endif %}
+                        <br><small class="text-muted">
+                            {% if current_ip and current_ip|stringformat:'s' != new_ip %}
+                            {{ current_ip }} <i class="mdi mdi-arrow-right"></i> {{ new_ip }}
+                            {% else %}
+                            {{ new_ip }}
+                            {% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endwith %}
+                {% endif %}
+                {% if client_data.sync_serial_number %}
+                {% with current_serial=object.serial|default:"" new_serial=client_data.sync_serial_number %}
+                <div class="form-check sync-field {% if current_serial == new_serial %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-serial" {% if current_serial != new_serial %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-serial">
+                        <strong>Serial Number</strong>
+                        {% if current_serial == new_serial %}
+                        <i class="mdi mdi-check-circle text-success"></i>
+                        {% endif %}
+                        <br><small class="text-muted">
+                            {% if current_serial and current_serial != new_serial %}
+                            {{ current_serial }} <i class="mdi mdi-arrow-right"></i> {{ new_serial }}
+                            {% else %}
+                            {{ new_serial }}
+                            {% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endwith %}
+                {% endif %}
+                {% if client_data.snmp_location %}
+                {% with current_loc=object.comments|default:"" new_loc=client_data.snmp_location %}
+                <div class="form-check sync-field {% if new_loc in current_loc %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-location" {% if new_loc not in current_loc %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-location">
+                        <strong>SNMP Location</strong> <span class="badge bg-info text-dark">to comments</span>
+                        {% if new_loc in current_loc %}
+                        <i class="mdi mdi-check-circle text-success"></i>
+                        {% endif %}
+                        <br><small class="text-muted">{{ new_loc|truncatechars:40 }}</small>
+                    </label>
+                </div>
+                {% endwith %}
+                {% endif %}
+            </div>
+            <div class="col-md-4">
+                <h6 class="text-muted mb-2">Device Type & Platform</h6>
+                {% if client_data.platform %}
+                {% with current_dt=object.device_type.model|default:"" new_dt=client_data.platform %}
+                <div class="form-check sync-field {% if current_dt == new_dt %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-device-type" {% if current_dt != new_dt %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-device-type">
+                        <strong>Device Type</strong>
+                        {% if current_dt == new_dt %}
+                        <i class="mdi mdi-check-circle text-success"></i>
+                        {% endif %}
+                        <br><small class="text-muted">
+                            {% if current_dt and current_dt != new_dt %}
+                            {{ object.device_type }} <i class="mdi mdi-arrow-right"></i> Cisco/{{ new_dt }}
+                            {% else %}
+                            Cisco/{{ new_dt }}
+                            {% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endwith %}
+                {% endif %}
+                {% if client_data.software_type and client_data.software_version %}
+                {% with current_plat=object.platform.name|default:"" new_plat_name=client_data.software_version %}
+                <div class="form-check sync-field {% if current_plat == new_plat_name %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-platform" {% if current_plat != new_plat_name %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-platform">
+                        <strong>Platform</strong>
+                        {% if current_plat == new_plat_name %}
+                        <i class="mdi mdi-check-circle text-success"></i>
+                        {% endif %}
+                        <br><small class="text-muted">
+                            {% if current_plat and current_plat != new_plat_name %}
+                            {{ current_plat }} <i class="mdi mdi-arrow-right"></i> {{ client_data.software_type }}/{{ client_data.software_version }}
+                            {% else %}
+                            {{ client_data.software_type }}/{{ client_data.software_version }}
+                            {% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endwith %}
+                {% endif %}
+            </div>
+            <div class="col-md-4">
+                <h6 class="text-muted mb-2">Catalyst Center Information</h6>
+                {% with cc_id=object.custom_field_data.cc_device_id|default:"" new_id=client_data.device_id|default:"" %}
+                {% if new_id %}
+                <div class="form-check sync-field {% if cc_id == new_id %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-cc-id" {% if cc_id != new_id %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-cc-id">
+                        <strong>Catalyst Center ID</strong>
+                        {% if cc_id == new_id %}<i class="mdi mdi-check-circle text-success"></i>{% endif %}
+                        <br><small class="text-muted">
+                            {% if cc_id and cc_id != new_id %}<del>{{ cc_id|truncatechars:8 }}</del> <i class="mdi mdi-arrow-right"></i> {% endif %}{{ new_id|truncatechars:20 }}
+                            {% if cc_id == new_id %}<i class="mdi mdi-check text-success"></i>{% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endif %}
+                {% endwith %}
+                {% with cc_series=object.custom_field_data.cc_series|default:"" new_series=client_data.series|default:"" %}
+                {% if new_series %}
+                <div class="form-check sync-field {% if cc_series == new_series %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-cc-series" {% if cc_series != new_series %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-cc-series">
+                        <strong>Catalyst Center Series</strong>
+                        {% if cc_series == new_series %}<i class="mdi mdi-check-circle text-success"></i>{% endif %}
+                        <br><small class="text-muted">
+                            {% if cc_series and cc_series != new_series %}<del>{{ cc_series|truncatechars:15 }}</del> <i class="mdi mdi-arrow-right"></i> {% endif %}{{ new_series|truncatechars:30 }}
+                            {% if cc_series == new_series %}<i class="mdi mdi-check text-success"></i>{% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endif %}
+                {% endwith %}
+                {% with cc_role=object.custom_field_data.cc_role|default:"" new_role=client_data.role|default:"" %}
+                {% if new_role %}
+                <div class="form-check sync-field {% if cc_role == new_role %}synced{% endif %}">
+                    <input class="form-check-input" type="checkbox" id="sync-cc-role" {% if cc_role != new_role %}checked{% endif %}>
+                    <label class="form-check-label" for="sync-cc-role">
+                        <strong>Catalyst Center Role</strong>
+                        {% if cc_role == new_role %}<i class="mdi mdi-check-circle text-success"></i>{% endif %}
+                        <br><small class="text-muted">
+                            {% if cc_role and cc_role != new_role %}<del>{{ cc_role }}</del> <i class="mdi mdi-arrow-right"></i> {% endif %}{{ new_role }}
+                            {% if cc_role == new_role %}<i class="mdi mdi-check text-success"></i>{% endif %}
+                        </small>
+                    </label>
+                </div>
+                {% endif %}
+                {% endwith %}
+            </div>
+        </div>
+        <!-- Interfaces Section -->
+        <div class="row mt-3 pt-3 border-top">
+            <div class="col-md-6">
+                <h6 class="text-muted mb-2"><i class="mdi mdi-ethernet"></i> Interfaces</h6>
+                <div class="form-check sync-field">
+                    <input class="form-check-input" type="checkbox" id="sync-interfaces">
+                    <label class="form-check-label" for="sync-interfaces">
+                        <strong>Sync Interfaces from Catalyst Center</strong>
+                        <br><small class="text-muted">
+                            Import/update network interfaces including IP addresses, speeds, and descriptions.
+                            Creates new interfaces if they don't exist, updates existing ones.
+                        </small>
+                    </label>
+                </div>
+                <div class="form-check sync-field ms-4 mt-2">
+                    <input class="form-check-input" type="checkbox" id="overwrite-ips" disabled>
+                    <label class="form-check-label" for="overwrite-ips">
+                        <strong>Overwrite existing IPs</strong>
+                        <br><small class="text-muted">
+                            Remove IPs on synced interfaces that aren't in Catalyst Center data.
+                            <span class="text-warning"><i class="mdi mdi-alert"></i> Use with caution - may delete valid secondary IPs.</span>
+                        </small>
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-muted mb-2"><i class="mdi mdi-flash"></i> Power over Ethernet</h6>
+                <div class="form-check sync-field">
+                    <input class="form-check-input" type="checkbox" id="sync-poe">
+                    <label class="form-check-label" for="sync-poe">
+                        <strong>Sync POE Data</strong>
+                        <br><small class="text-muted">
+                            Update POE mode and type on interfaces. Requires separate API call.
+                            Sets poe_mode (PSE) and poe_type (802.3af/at/bt) based on CC data.
+                        </small>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="mt-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="select-all-btn">
+                <i class="mdi mdi-checkbox-multiple-marked"></i> Select All
+            </button>
+            <button type="button" class="btn btn-success btn-sm" id="sync-from-dnac-btn">
+                <i class="mdi mdi-sync"></i> Sync Selected
+            </button>
+            <span id="sync-result" class="ms-2"></span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- External link to Catalyst Center -->
+{% if catalyst_url %}
+<div class="mt-3">
+    {% if client_data.device_id %}
+    <a href="{{ catalyst_url }}/dna/provision/devices/inventory/device-details?deviceId={{ client_data.device_id }}" target="_blank" class="btn btn-primary btn-sm">
+        <i class="mdi mdi-open-in-new"></i> View in Catalyst Center
+    </a>
+    {% else %}
+    <a href="{{ catalyst_url }}" target="_blank" class="btn btn-outline-primary btn-sm">
+        <i class="mdi mdi-open-in-new"></i> Open Catalyst Center
+    </a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if client_data %}
+<script>
+// Enable/disable overwrite-ips based on sync-interfaces checkbox
+var syncInterfacesCheckbox = document.getElementById('sync-interfaces');
+var overwriteIpsCheckbox = document.getElementById('overwrite-ips');
+if (syncInterfacesCheckbox && overwriteIpsCheckbox) {
+    syncInterfacesCheckbox.addEventListener('change', function() {
+        overwriteIpsCheckbox.disabled = !this.checked;
+        if (!this.checked) {
+            overwriteIpsCheckbox.checked = false;
+        }
+    });
+}
+
+// Select All button
+document.getElementById('select-all-btn').addEventListener('click', function() {
+    var checkboxes = document.querySelectorAll('.form-check-input:not(#overwrite-ips)');
+    var allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    // Handle overwrite-ips based on sync-interfaces state
+    if (overwriteIpsCheckbox) {
+        overwriteIpsCheckbox.disabled = !syncInterfacesCheckbox.checked;
+    }
+    this.innerHTML = allChecked ?
+        '<i class="mdi mdi-checkbox-multiple-marked"></i> Select All' :
+        '<i class="mdi mdi-checkbox-multiple-blank-outline"></i> Deselect All';
+});
+
+document.getElementById('sync-from-dnac-btn').addEventListener('click', function() {
+    var btn = this;
+    var resultSpan = document.getElementById('sync-result');
+
+    // Gather selected sync options
+    var syncOptions = {
+        sync_ip: document.getElementById('sync-ip') ? document.getElementById('sync-ip').checked : false,
+        sync_serial: document.getElementById('sync-serial') ? document.getElementById('sync-serial').checked : false,
+        sync_location: document.getElementById('sync-location') ? document.getElementById('sync-location').checked : false,
+        sync_device_type: document.getElementById('sync-device-type') ? document.getElementById('sync-device-type').checked : false,
+        sync_platform: document.getElementById('sync-platform') ? document.getElementById('sync-platform').checked : false,
+        sync_cc_id: document.getElementById('sync-cc-id') ? document.getElementById('sync-cc-id').checked : false,
+        sync_cc_series: document.getElementById('sync-cc-series') ? document.getElementById('sync-cc-series').checked : false,
+        sync_cc_role: document.getElementById('sync-cc-role') ? document.getElementById('sync-cc-role').checked : false,
+        sync_interfaces: document.getElementById('sync-interfaces') ? document.getElementById('sync-interfaces').checked : false,
+        overwrite_ips: document.getElementById('overwrite-ips') ? document.getElementById('overwrite-ips').checked : false,
+        sync_poe: document.getElementById('sync-poe') ? document.getElementById('sync-poe').checked : false
+    };
+
+    // Check if at least one option is selected
+    var anySelected = Object.values(syncOptions).some(v => v);
+    if (!anySelected) {
+        resultSpan.innerHTML = '<span class="text-warning"><i class="mdi mdi-alert"></i> Please select at least one field to sync</span>';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Syncing...';
+    resultSpan.innerHTML = '';
+
+    fetch('{% url "plugins:netbox_catalyst_center:sync_device" object.pk %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(syncOptions)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            var detailHtml = '<span class="text-success"><i class="mdi mdi-check-circle"></i> ' + data.message + '</span>';
+            if (data.changes && data.changes.length > 0) {
+                detailHtml += '<br><small class="text-muted">' + data.changes.join(', ') + '</small>';
+            }
+            resultSpan.innerHTML = detailHtml;
+            // Reload page after short delay to show updated data
+            setTimeout(function() {
+                window.location.reload();
+            }, 2500);
+        } else {
+            var errorHtml = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</span>';
+            if (data.traceback) {
+                console.error('Sync error traceback:', data.traceback);
+            }
+            resultSpan.innerHTML = errorHtml;
+        }
+    })
+    .catch(error => {
+        resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> Request failed: ' + error + '</span>';
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="mdi mdi-sync"></i> Sync Selected';
+    });
+});
+</script>
+{% endif %}

@@ -1,0 +1,33 @@
+{% extends 'dcim/device/base.html' %}
+{% load helpers %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        {% if loading %}
+        <!-- Loading state - htmx will fetch content -->
+        <div id="catalyst-center-content"
+             hx-get="{% url 'plugins:netbox_catalyst_center:device_content' pk=object.pk %}"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <div class="d-flex justify-content-center align-items-center py-5">
+                <div class="text-center">
+                    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="text-muted mb-0">Loading Catalyst Center data...</p>
+                    <p class="text-muted small">Querying device information, compliance, and advisories</p>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <!-- Direct content (for errors) -->
+        {% if error %}
+        <div class="alert alert-warning">
+            <i class="mdi mdi-alert"></i> {{ error }}
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -6,6 +6,7 @@ from django.urls import path
 
 from .views import (
     CatalystCenterSettingsView,
+    DeviceCatalystCenterContentView,
     ImportDevicesView,
     ImportPageView,
     InventoryComparisonView,
@@ -22,4 +23,5 @@ urlpatterns = [
     path("sync-device/<int:pk>/", SyncDeviceFromDNACView.as_view(), name="sync_device"),
     path("search-devices/", SearchDevicesView.as_view(), name="search_devices"),
     path("import-devices/", ImportDevicesView.as_view(), name="import_devices"),
+    path("device/<int:pk>/content/", DeviceCatalystCenterContentView.as_view(), name="device_content"),
 ]

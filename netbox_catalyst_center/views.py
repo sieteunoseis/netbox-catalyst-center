@@ -10,9 +10,11 @@ import re
 from dcim.models import Device, InventoryItem, Manufacturer
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 from django.contrib.contenttypes.models import ContentType
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
+from django.template.loader import render_to_string
 from django.views import View
 from ipam.models import IPAddress
 from netbox.views import generic
@@ -207,10 +209,10 @@ def is_virtual_chassis_enabled():
 
 @register_model_view(Device, name="catalyst_center", path="catalyst-center")
 class DeviceCatalystCenterView(generic.ObjectView):
-    """Display Catalyst Center client details for a Device."""
+    """Display Catalyst Center client details for a Device with async loading."""
 
     queryset = Device.objects.all()
-    template_name = "netbox_catalyst_center/client_tab.html"
+    template_name = "netbox_catalyst_center/device_tab.html"
 
     tab = ViewTab(
         label="Catalyst Center",
@@ -221,7 +223,26 @@ class DeviceCatalystCenterView(generic.ObjectView):
     )
 
     def get(self, request, pk):
-        """Handle GET request for the Catalyst Center tab."""
+        """Render initial tab with loading spinner - content loads via htmx."""
+        device = Device.objects.get(pk=pk)
+        return render(
+            request,
+            self.template_name,
+            {
+                "object": device,
+                "tab": self.tab,
+                "loading": True,
+            },
+        )
+
+
+class DeviceCatalystCenterContentView(LoginRequiredMixin, PermissionRequiredMixin, View):
+    """HTMX endpoint that returns Catalyst Center content for async loading."""
+
+    permission_required = "dcim.view_device"
+
+    def get(self, request, pk):
+        """Fetch Catalyst Center data and return HTML content."""
         device = (
             Device.objects.select_related("device_type__manufacturer", "platform", "primary_ip4", "primary_ip6")
             .prefetch_related("interfaces")
@@ -300,20 +321,21 @@ class DeviceCatalystCenterView(generic.ObjectView):
 
         # Choose template based on data type
         if client_data.get("is_network_device"):
-            template = "netbox_catalyst_center/network_device_tab.html"
+            template = "netbox_catalyst_center/network_device_tab_content.html"
         else:
-            template = self.template_name
+            template = "netbox_catalyst_center/client_tab_content.html"
 
-        return render(
-            request,
-            template,
-            {
-                "object": device,
-                "tab": self.tab,
-                "client_data": client_data,
-                "error": error,
-                "catalyst_url": catalyst_url,
-            },
+        return HttpResponse(
+            render_to_string(
+                template,
+                {
+                    "object": device,
+                    "client_data": client_data,
+                    "error": error,
+                    "catalyst_url": catalyst_url,
+                },
+                request=request,
+            )
         )
 
 
