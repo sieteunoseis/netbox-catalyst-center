@@ -2694,7 +2694,7 @@ def _import_as_virtual_chassis(
             mgmt_interface = Interface(
                 device=master_device,
                 name="Management",
-                type="other",
+                type="1000base-t",
             )
             mgmt_interface.save()
 
@@ -3084,7 +3084,7 @@ class ImportDevicesView(View):
                 mgmt_interface = Interface(
                     device=new_device,
                     name="Management",
-                    type="other",
+                    type="1000base-t",
                 )
                 mgmt_interface.save()
 
