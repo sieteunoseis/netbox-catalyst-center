@@ -1,7 +1,7 @@
 """
 NetBox Catalyst Center Plugin
 
-Display Cisco Catalyst Center (DNA Center) client details in Device detail pages.
+Display Cisco Catalyst Center client details in Device detail pages.
 Shows real-time IP address, connected AP, health score, and connection status.
 """
 
@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.3.6"
+__version__ = "1.4.0"
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,9 @@ class CatalystCenterConfig(PluginConfig):
         "timeout": 30,  # API timeout in seconds
         "cache_timeout": 60,  # Cache results for 60 seconds
         "verify_ssl": False,  # Skip SSL verification for self-signed certs
+        # Strip domain from hostnames when matching NetBox devices to Catalyst Center
+        # When True, "switch01" (NetBox) will match "switch01.example.com" (CC)
+        "strip_domain": True,
         # Virtual Chassis: Import stacks as virtual chassis with separate devices per member
         # When enabled, stacks are imported as:
         # - One device per stack member (hostname.1, hostname.2, etc.)
@@ -159,12 +162,76 @@ class CatalystCenterConfig(PluginConfig):
                 "lookup": "hostname",
             },  # Cisco devices by hostname
         ],
+        # Endpoint types to show Catalyst Center tab for (requires netbox-endpoints plugin)
+        # Format: list of dicts with manufacturer (regex), endpoint_type (regex, optional)
+        # All endpoints use MAC lookup since they're wireless/wired clients
+        #
+        # Example:
+        # "endpoint_mappings": [
+        #     {"manufacturer": "vocera"},  # All Vocera endpoints
+        #     {"manufacturer": "cisco", "endpoint_type": ".*phone.*"},  # Cisco phones
+        # ]
+        # If empty, shows tab for ALL endpoints with a MAC address
+        "endpoint_mappings": [],
     }
 
     def ready(self):
         """Register signal to create custom fields after migrations."""
         super().ready()
         post_migrate.connect(create_custom_fields, sender=self)
+
+        # Register endpoint view if netbox_endpoints is available
+        self._register_endpoint_views()
+
+    def _register_endpoint_views(self):
+        """Register Catalyst Center tab for Endpoints if plugin is installed."""
+        try:
+            from netbox_endpoints.models import Endpoint
+            from utilities.views import ViewTab, register_model_view
+            from netbox.views import generic
+            from django.shortcuts import render
+
+            from .views import should_show_catalyst_tab_endpoint
+
+            # Check if already registered
+            from utilities.views import registry
+            views_dict = registry.get('views', {})
+            endpoint_views = views_dict.get('netbox_endpoints', {}).get('endpoint', [])
+            if any(v.get('name') == 'catalyst_center' for v in endpoint_views):
+                return  # Already registered
+
+            @register_model_view(Endpoint, name="catalyst_center", path="catalyst-center")
+            class EndpointCatalystCenterView(generic.ObjectView):
+                """Display Catalyst Center client details for an Endpoint."""
+
+                queryset = Endpoint.objects.all()
+                template_name = "netbox_catalyst_center/endpoint_tab.html"
+
+                tab = ViewTab(
+                    label="Catalyst Center",
+                    weight=9000,
+                    permission="netbox_endpoints.view_endpoint",
+                    hide_if_empty=False,
+                    visible=should_show_catalyst_tab_endpoint,
+                )
+
+                def get(self, request, pk):
+                    endpoint = Endpoint.objects.get(pk=pk)
+                    return render(
+                        request,
+                        self.template_name,
+                        {
+                            "object": endpoint,
+                            "tab": self.tab,
+                            "loading": True,
+                        },
+                    )
+
+            logger.info("Registered Catalyst Center tab for Endpoint model")
+        except ImportError:
+            logger.debug("netbox_endpoints not installed, skipping endpoint view registration")
+        except Exception as e:
+            logger.warning(f"Could not register endpoint views: {e}")
 
 
 config = CatalystCenterConfig

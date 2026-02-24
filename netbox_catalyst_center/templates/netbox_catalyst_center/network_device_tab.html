@@ -349,7 +349,7 @@
         </div>
         {% endif %}
 
-        <!-- Sync from DNAC Section -->
+        <!-- Sync from Catalyst Center Section -->
         {% if client_data %}
         <div class="card mt-3">
             <div class="card-header">
@@ -556,7 +556,7 @@
                     <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="select-all-btn">
                         <i class="mdi mdi-checkbox-multiple-marked"></i> Select All
                     </button>
-                    <button type="button" class="btn btn-success btn-sm" id="sync-from-dnac-btn">
+                    <button type="button" class="btn btn-success btn-sm" id="sync-from-cc-btn">
                         <i class="mdi mdi-sync"></i> Sync Selected
                     </button>
                     <span id="sync-result" class="ms-2"></span>
@@ -608,7 +608,7 @@
                 '<i class="mdi mdi-checkbox-multiple-blank-outline"></i> Deselect All';
         });
 
-        document.getElementById('sync-from-dnac-btn').addEventListener('click', function() {
+        document.getElementById('sync-from-cc-btn').addEventListener('click', function() {
             var btn = this;
             var resultSpan = document.getElementById('sync-result');
 

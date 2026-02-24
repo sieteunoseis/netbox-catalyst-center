@@ -4,6 +4,76 @@
 <div class="alert alert-warning">
     <i class="mdi mdi-alert"></i> {{ error }}
 </div>
+{% if object.serial or object.primary_ip4 or object.primary_ip6 %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-plus-network"></i> Add to Catalyst Center
+        </h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-2">This device was not found in Catalyst Center. You can add it using one of the options below.</p>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            {% if object.serial and object.device_type %}
+            <button type="button" class="btn btn-outline-success btn-sm" id="add-to-pnp-btn">
+                <i class="mdi mdi-clipboard-plus"></i> Add to PnP
+            </button>
+            <small class="text-muted me-3">S/N: {{ object.serial }}, PID: {{ object.device_type.model }}</small>
+            {% endif %}
+            {% if object.primary_ip4 or object.primary_ip6 %}
+            <button type="button" class="btn btn-outline-primary btn-sm" id="add-to-inventory-btn">
+                <i class="mdi mdi-server-plus"></i> Add to Inventory
+            </button>
+            <small class="text-muted">IP: {% if object.primary_ip4 %}{{ object.primary_ip4.address.ip }}{% else %}{{ object.primary_ip6.address.ip }}{% endif %}</small>
+            {% endif %}
+        </div>
+        <span id="add-to-cc-result" class="d-block mt-2"></span>
+    </div>
+</div>
+<script>
+function addToCC(url, btn) {
+    var resultSpan = document.getElementById('add-to-cc-result');
+    btn.disabled = true;
+    var origHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Adding...';
+    resultSpan.innerHTML = '';
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json'}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            resultSpan.innerHTML = '<span class="text-success"><i class="mdi mdi-check-circle"></i> ' + data.message + '. Refreshing in 5s...</span>';
+            setTimeout(function() { window.location.reload(); }, 5000);
+        } else {
+            resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</span>';
+            btn.disabled = false;
+            btn.innerHTML = origHTML;
+        }
+    })
+    .catch(function(err) {
+        resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> Request failed</span>';
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+    });
+}
+{% if object.serial and object.device_type %}
+document.getElementById('add-to-pnp-btn').addEventListener('click', function() {
+    if (confirm('Add {{ object.name }} to Catalyst Center PnP?\n\nSerial: {{ object.serial }}\nProduct ID: {{ object.device_type.model }}')) {
+        addToCC('{% url "plugins:netbox_catalyst_center:add_to_pnp" object.pk %}', this);
+    }
+});
+{% endif %}
+{% if object.primary_ip4 or object.primary_ip6 %}
+document.getElementById('add-to-inventory-btn').addEventListener('click', function() {
+    if (confirm('Add {{ object.name }} to Catalyst Center inventory?\n\nIP: {% if object.primary_ip4 %}{{ object.primary_ip4.address.ip }}{% else %}{{ object.primary_ip6.address.ip }}{% endif %}\n\nGlobal credentials from Catalyst Center will be used for discovery.')) {
+        addToCC('{% url "plugins:netbox_catalyst_center:add_to_inventory" object.pk %}', this);
+    }
+});
+{% endif %}
+</script>
+{% endif %}
 {% elif client_data %}
 <div class="row">
     <!-- Reachability Status Card -->
@@ -343,9 +413,79 @@
 <div class="alert alert-info">
     <i class="mdi mdi-information"></i> No device data available from Catalyst Center. The device may not be in the inventory.
 </div>
+{% if object.serial or object.primary_ip4 or object.primary_ip6 %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-plus-network"></i> Add to Catalyst Center
+        </h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-2">You can add this device to Catalyst Center using one of the options below.</p>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            {% if object.serial and object.device_type %}
+            <button type="button" class="btn btn-outline-success btn-sm" id="add-to-pnp-btn2">
+                <i class="mdi mdi-clipboard-plus"></i> Add to PnP
+            </button>
+            <small class="text-muted me-3">S/N: {{ object.serial }}, PID: {{ object.device_type.model }}</small>
+            {% endif %}
+            {% if object.primary_ip4 or object.primary_ip6 %}
+            <button type="button" class="btn btn-outline-primary btn-sm" id="add-to-inventory-btn2">
+                <i class="mdi mdi-server-plus"></i> Add to Inventory
+            </button>
+            <small class="text-muted">IP: {% if object.primary_ip4 %}{{ object.primary_ip4.address.ip }}{% else %}{{ object.primary_ip6.address.ip }}{% endif %}</small>
+            {% endif %}
+        </div>
+        <span id="add-to-cc-result2" class="d-block mt-2"></span>
+    </div>
+</div>
+<script>
+function addToCC2(url, btn) {
+    var resultSpan = document.getElementById('add-to-cc-result2');
+    btn.disabled = true;
+    var origHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Adding...';
+    resultSpan.innerHTML = '';
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json'}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            resultSpan.innerHTML = '<span class="text-success"><i class="mdi mdi-check-circle"></i> ' + data.message + '. Refreshing in 5s...</span>';
+            setTimeout(function() { window.location.reload(); }, 5000);
+        } else {
+            resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</span>';
+            btn.disabled = false;
+            btn.innerHTML = origHTML;
+        }
+    })
+    .catch(function(err) {
+        resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> Request failed</span>';
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+    });
+}
+{% if object.serial and object.device_type %}
+document.getElementById('add-to-pnp-btn2').addEventListener('click', function() {
+    if (confirm('Add {{ object.name }} to Catalyst Center PnP?\n\nSerial: {{ object.serial }}\nProduct ID: {{ object.device_type.model }}')) {
+        addToCC2('{% url "plugins:netbox_catalyst_center:add_to_pnp" object.pk %}', this);
+    }
+});
+{% endif %}
+{% if object.primary_ip4 or object.primary_ip6 %}
+document.getElementById('add-to-inventory-btn2').addEventListener('click', function() {
+    if (confirm('Add {{ object.name }} to Catalyst Center inventory?\n\nIP: {% if object.primary_ip4 %}{{ object.primary_ip4.address.ip }}{% else %}{{ object.primary_ip6.address.ip }}{% endif %}\n\nGlobal credentials from Catalyst Center will be used for discovery.')) {
+        addToCC2('{% url "plugins:netbox_catalyst_center:add_to_inventory" object.pk %}', this);
+    }
+});
+{% endif %}
+</script>
+{% endif %}
 {% endif %}
 
-<!-- Sync from DNAC Section -->
+<!-- Sync from Catalyst Center Section -->
 {% if client_data %}
 <div class="card mt-3">
     <div class="card-header">
@@ -552,7 +692,7 @@
             <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="select-all-btn">
                 <i class="mdi mdi-checkbox-multiple-marked"></i> Select All
             </button>
-            <button type="button" class="btn btn-success btn-sm" id="sync-from-dnac-btn">
+            <button type="button" class="btn btn-success btn-sm" id="sync-from-cc-btn">
                 <i class="mdi mdi-sync"></i> Sync Selected
             </button>
             <span id="sync-result" class="ms-2"></span>
@@ -604,7 +744,7 @@ document.getElementById('select-all-btn').addEventListener('click', function() {
         '<i class="mdi mdi-checkbox-multiple-blank-outline"></i> Deselect All';
 });
 
-document.getElementById('sync-from-dnac-btn').addEventListener('click', function() {
+document.getElementById('sync-from-cc-btn').addEventListener('click', function() {
     var btn = this;
     var resultSpan = document.getElementById('sync-result');
 

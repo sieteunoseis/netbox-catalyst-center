@@ -25,6 +25,29 @@ class CatalystCenterClient:
         self.verify_ssl = verify_ssl
         self._token = None
 
+    @staticmethod
+    def _strip_domain(hostname):
+        """Strip domain from hostname if strip_domain is enabled in config."""
+        if not hostname:
+            return ""
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        if config.get("strip_domain", True):
+            return hostname.split(".")[0]
+        return hostname
+
+    @staticmethod
+    def _validate_ip(value):
+        """Return value only if it's a valid IP address, otherwise None."""
+        if not value:
+            return None
+        import ipaddress
+        try:
+            ipaddress.ip_address(value)
+            return value
+        except ValueError:
+            logger.warning(f"Catalyst Center returned '{value}' as management IP, which is not a valid IP address")
+            return None
+
     def _get_token(self):
         """Authenticate and get API token."""
         if self._token:
@@ -89,6 +112,108 @@ class CatalystCenterClient:
             logger.error(f"Request error to Catalyst Center: {e}")
             return {"error": str(e)}
 
+    def _make_post_request(self, endpoint, payload=None):
+        """Make authenticated POST API request with JSON body."""
+        token = self._get_token()
+        if not token:
+            return {"error": "Failed to authenticate to Catalyst Center"}
+
+        try:
+            url = f"{self.base_url}{endpoint}"
+            headers = {
+                "X-Auth-Token": token,
+                "Content-Type": "application/json",
+            }
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                verify=self.verify_ssl,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                self._token = None
+                cache.delete(f"catalyst_center_token_{self.base_url}")
+                return self._make_post_request(endpoint, payload)
+            logger.error(f"HTTP error from Catalyst Center POST: {e}")
+            error_body = str(e)
+            try:
+                error_body = e.response.json().get("response", {}).get("detail", str(e))
+            except Exception:
+                pass
+            return {"error": f"HTTP {e.response.status_code}: {error_body}"}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error to Catalyst Center: {e}")
+            return {"error": str(e)}
+
+    def _make_enrichment_request(self, endpoint, mac_address):
+        """
+        Make request to client-enrichment-details endpoint.
+
+        This endpoint uses different headers instead of query params:
+        - entity_type: "mac_address"
+        - entity_value: the MAC address
+        """
+        token = self._get_token()
+        if not token:
+            return {"error": "Failed to authenticate to Catalyst Center"}
+
+        try:
+            url = f"{self.base_url}{endpoint}"
+            headers = {
+                "X-Auth-Token": token,
+                "Content-Type": "application/json",
+                "entity_type": "mac_address",
+                "entity_value": mac_address,
+            }
+            response = requests.get(
+                url,
+                headers=headers,
+                verify=self.verify_ssl,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Convert enrichment response format to match client-detail format
+            if isinstance(data, list) and data:
+                # Enrichment returns array, extract first item's userDetails
+                enrichment = data[0]
+                user_details = enrichment.get("userDetails", {})
+                connected_device = enrichment.get("connectedDevice", [])
+
+                # Build a compatible response
+                return {
+                    "detail": {
+                        "hostIpV4": user_details.get("hostIpV4"),
+                        "hostIpV6": user_details.get("hostIpV6", []),
+                        "hostMac": user_details.get("hostMac"),
+                        "hostName": user_details.get("hostName"),
+                        "hostType": user_details.get("hostType"),
+                        "connectionStatus": user_details.get("connectionStatus"),
+                        "healthScore": user_details.get("healthScore", []),
+                        "ssid": user_details.get("ssid"),
+                        "frequency": user_details.get("frequency"),
+                        "channel": user_details.get("channel"),
+                        "apGroup": user_details.get("apGroup"),
+                        "location": user_details.get("location"),
+                        "connectedDevice": connected_device,
+                        "vlanId": user_details.get("vlanId"),
+                        "lastUpdated": user_details.get("lastUpdated"),
+                    }
+                }
+            return {"error": "No data returned from enrichment endpoint"}
+
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error from enrichment endpoint: {e}")
+            return {"error": f"HTTP {e.response.status_code}: {str(e)}"}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error to enrichment endpoint: {e}")
+            return {"error": str(e)}
+
     def _dedupe_platform(self, platform_id):
         """
         Deduplicate platform ID for stacked switches.
@@ -135,13 +260,29 @@ class CatalystCenterClient:
             cached["cached"] = True
             return cached
 
-        # Query Catalyst Center
+        # Query Catalyst Center - try v1 client-detail first
         endpoint = "/dna/intent/api/v1/client-detail"
         params = {"macAddress": mac_formatted}
 
         result = self._make_request(endpoint, params)
 
+        # If 404, try client-enrichment-details as fallback
+        if "error" in result and "404" in str(result.get("error", "")):
+            logger.debug(f"client-detail returned 404, trying client-enrichment-details for {mac_formatted}")
+            enrichment_endpoint = "/dna/intent/api/v1/client-enrichment-details"
+            # client-enrichment-details uses headers instead of params
+            enrichment_result = self._make_enrichment_request(enrichment_endpoint, mac_formatted)
+            if "error" not in enrichment_result:
+                result = enrichment_result
+
         if "error" in result:
+            # Add helpful context about why client might not be found
+            error_msg = result.get("error", "Unknown error")
+            if "404" in error_msg:
+                return {
+                    "error": f"Client not found in Catalyst Center. The device may not be currently connected or recently seen. MAC: {mac_formatted}",
+                    "mac_address": mac_formatted,
+                }
             return result
 
         # Parse the response
@@ -229,7 +370,7 @@ class CatalystCenterClient:
         Get network device details by management IP or hostname.
 
         For Cisco infrastructure devices (voice gateways, APs, switches, etc.)
-        that are in DNAC inventory.
+        that are in Catalyst Center inventory.
 
         Args:
             hostname: Device hostname (with or without domain)
@@ -261,19 +402,19 @@ class CatalystCenterClient:
                 result = None  # Fall through to hostname lookup
 
         # Strategy 2: Fetch all devices and filter locally (case-insensitive)
-        # This is the most reliable method since DNAC regex is case-sensitive
+        # This is the most reliable method since Catalyst Center regex is case-sensitive
         if not result or not result.get("response"):
-            base_hostname = hostname.lower().replace(".ohsu.edu", "")
+            base_hostname = self._strip_domain(hostname.lower())
 
             # Check if we have a cached device list
             all_devices_cache_key = "catalyst_all_devices"
             all_devices = cache.get(all_devices_cache_key)
 
             if not all_devices:
-                # Fetch all devices from DNAC with pagination (default limit is 500)
-                logger.debug("Fetching all devices from DNAC for local filtering")
+                # Fetch all devices from Catalyst Center with pagination (default limit is 500)
+                logger.debug("Fetching all devices from Catalyst Center for local filtering")
                 all_devices = []
-                offset = 0
+                offset = 1  # Catalyst Center uses 1-based offset
                 page_size = 500
                 max_pages = 20  # Safety limit: 10,000 devices max
 
@@ -299,18 +440,18 @@ class CatalystCenterClient:
             if all_devices:
                 # Filter locally with case-insensitive matching
                 for device in all_devices:
-                    dnac_hostname = device.get("hostname", "").lower()
-                    dnac_base = dnac_hostname.replace(".ohsu.edu", "")
-                    if dnac_base == base_hostname or base_hostname in dnac_base:
+                    cc_hostname = (device.get("hostname") or "").lower()
+                    cc_base = self._strip_domain(cc_hostname)
+                    if cc_base == base_hostname or base_hostname in cc_base:
                         result = {"response": [device]}
                         logger.debug(f"Found device by local filter: {device.get('hostname')}")
                         break
 
         if not result or "error" in result:
-            return result if result else {"error": "No result from DNAC API"}
+            return result if result else {"error": "No result from Catalyst Center API"}
 
         response = result.get("response", [])
-        base_hostname = hostname.lower().replace(".ohsu.edu", "")
+        base_hostname = self._strip_domain(hostname.lower())
 
         # Find matching device (case-insensitive comparison on our side)
         device_data = None
@@ -323,21 +464,20 @@ class CatalystCenterClient:
             else:
                 # Look for exact hostname match (case-insensitive)
                 for device in response:
-                    dnac_hostname = device.get("hostname", "").lower()
-                    dnac_base = dnac_hostname.replace(".ohsu.edu", "")
-                    if dnac_base == base_hostname:
+                    cc_hostname = (device.get("hostname") or "").lower()
+                    cc_base = self._strip_domain(cc_hostname)
+                    if cc_base == base_hostname:
                         device_data = device
                         logger.debug(f"Exact hostname match: {device.get('hostname')}")
                         break
 
                 # If no exact match, look for hostname that starts with our search term
-                # This prevents "admagw01" from incorrectly matching "admcap1n01"
                 if not device_data:
                     for device in response:
-                        dnac_hostname = device.get("hostname", "").lower()
-                        dnac_base = dnac_hostname.replace(".ohsu.edu", "")
-                        # Match if DNAC hostname starts with our hostname or vice versa
-                        if dnac_base.startswith(base_hostname) or base_hostname.startswith(dnac_base):
+                        cc_hostname = (device.get("hostname") or "").lower()
+                        cc_base = self._strip_domain(cc_hostname)
+                        # Match if CC hostname starts with our hostname or vice versa
+                        if cc_base.startswith(base_hostname) or base_hostname.startswith(cc_base):
                             device_data = device
                             logger.debug(f"Prefix hostname match: {device.get('hostname')}")
                             break
@@ -354,9 +494,9 @@ class CatalystCenterClient:
             if all_devices:
                 search_prefix = base_hostname[:3].lower() if len(base_hostname) >= 3 else base_hostname.lower()
                 for device in all_devices[:500]:  # Limit scan
-                    dnac_hostname = device.get("hostname", "").lower()
-                    if dnac_hostname.startswith(search_prefix):
-                        similar_devices.append(dnac_hostname)
+                    cc_hostname = (device.get("hostname") or "").lower()
+                    if cc_hostname.startswith(search_prefix):
+                        similar_devices.append(cc_hostname)
                     if len(similar_devices) >= 5:
                         break
 
@@ -402,7 +542,7 @@ class CatalystCenterClient:
         device_info = {
             "is_network_device": True,
             "hostname": device_data.get("hostname"),
-            "management_ip": device_data.get("managementIpAddress"),
+            "management_ip": self._validate_ip(device_data.get("managementIpAddress")),
             "device_type": device_data.get("type"),
             "device_family": device_data.get("family"),
             "platform": self._dedupe_platform(platform_raw),
@@ -847,7 +987,7 @@ class CatalystCenterClient:
         endpoint = "/dna/intent/api/v1/network-device"
         has_wildcard = "*" in search_value
 
-        # If no wildcard and searching by hostname or IP, use DNAC API directly
+        # If no wildcard and searching by hostname or IP, use Catalyst Center API directly
         # This is much faster and handles all 5000+ devices
         if not has_wildcard and search_type in ("hostname", "ip"):
             if search_type == "hostname":
@@ -888,7 +1028,7 @@ class CatalystCenterClient:
             return {
                 "devices": matched_devices,
                 "total_matched": len(matched_devices),
-                "total_in_dnac": len(matched_devices),  # We don't know total without fetching all
+                "total_in_cc": len(matched_devices),  # We don't know total without fetching all
             }
 
         # For wildcard searches or MAC, we need to fetch and filter locally
@@ -909,13 +1049,13 @@ class CatalystCenterClient:
         except re.error:
             return {"error": f"Invalid search pattern: {search_value}"}
 
-        # Fetch all devices with pagination (DNAC default limit is 500)
+        # Fetch all devices with pagination (Catalyst Center default limit is 500)
         all_devices_cache_key = "catalyst_all_devices_search"
         all_devices = cache.get(all_devices_cache_key)
 
         if not all_devices:
             all_devices = []
-            offset = 1  # DNAC uses 1-based offset
+            offset = 1  # Catalyst Center uses 1-based offset
             page_size = 500
 
             while True:
@@ -952,9 +1092,9 @@ class CatalystCenterClient:
             match = False
 
             if search_type == "hostname":
-                hostname = device.get("hostname", "") or ""
+                hostname = (device.get("hostname") or "")
                 # Also check without domain suffix
-                hostname_base = hostname.lower().replace(".ohsu.edu", "")
+                hostname_base = self._strip_domain(hostname.lower())
                 if pattern.search(hostname) or pattern.search(hostname_base):
                     match = True
 
@@ -1011,8 +1151,81 @@ class CatalystCenterClient:
         return {
             "devices": matched_devices,
             "total_matched": len(matched_devices),
-            "total_in_dnac": len(all_devices),
+            "total_in_cc": len(all_devices),
         }
+
+    def get_clients_by_ssid(self, ssid, limit=500):
+        """
+        Get all wireless clients connected to a specific SSID.
+
+        Args:
+            ssid: SSID name to filter by (e.g., "winchester")
+            limit: Maximum number of clients to return
+
+        Returns:
+            dict with "clients" array or "error"
+        """
+        # Check cache
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_clients_ssid_{ssid}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        # Use the v2 clients endpoint with SSID filter
+        # API: GET /dna/intent/api/v2/clients?ssid={ssid}
+        endpoint = "/dna/intent/api/v2/clients"
+        params = {"ssid": ssid, "limit": limit}
+
+        result = self._make_request(endpoint, params)
+
+        if "error" in result:
+            # Try v1 endpoint as fallback
+            logger.debug(f"v2 clients endpoint failed, trying client-health for SSID {ssid}")
+            return result
+
+        clients_list = result.get("response", [])
+
+        # Parse and normalize client data
+        clients = []
+        for client in clients_list:
+            client_data = {
+                "mac_address": client.get("macAddress"),
+                "ip_address": client.get("ipv4Address"),
+                "ipv6_address": client.get("ipv6Address"),
+                "hostname": client.get("hostName"),
+                "device_type": client.get("hostType"),  # WIRELESS
+                "os_type": client.get("osType"),
+                "os_version": client.get("osVersion"),
+                "device_vendor": client.get("vendor"),
+                "connected": client.get("connectionStatus") == "CONNECTED",
+                "connection_status": client.get("connectionStatus"),
+                "ssid": client.get("ssid"),
+                "frequency": client.get("band"),
+                "ap_name": client.get("apName"),
+                "ap_mac": client.get("apMac"),
+                "wlc_name": client.get("wlcName"),
+                "site": client.get("siteHierarchy"),
+                "vlan": client.get("vlanId"),
+                "last_updated": client.get("lastUpdated"),
+                "connected_since": client.get("connectedAt"),
+            }
+            clients.append(client_data)
+
+        client_info = {
+            "ssid": ssid,
+            "clients": clients,
+            "client_count": len(clients),
+            "cached": False,
+        }
+
+        # Cache the result
+        cache.set(cache_key, client_info, cache_timeout)
+
+        return client_info
 
     def test_connection(self):
         """Test connection to Catalyst Center."""
@@ -1030,6 +1243,130 @@ class CatalystCenterClient:
         return {
             "success": True,
             "message": f"Connected successfully. {device_count} network devices in inventory.",
+        }
+
+    def add_device_pnp(self, serial_number, product_id, hostname=None):
+        """
+        Add a device to the Catalyst Center PnP database.
+
+        Args:
+            serial_number: Device serial number (required)
+            product_id: Product ID / model (required)
+            hostname: Optional device hostname
+
+        Returns:
+            dict with success/error
+        """
+        if not serial_number:
+            return {"error": "Serial number is required"}
+        if not product_id:
+            return {"error": "Product ID is required"}
+
+        device_info = {
+            "serialNumber": serial_number,
+            "pid": product_id,
+        }
+        if hostname:
+            device_info["hostname"] = hostname
+
+        payload = {"deviceInfo": device_info}
+        endpoint = "/dna/intent/api/v1/onboarding/pnp-device"
+        result = self._make_post_request(endpoint, payload)
+
+        if "error" in result:
+            return result
+
+        return {
+            "success": True,
+            "message": f"Device {serial_number} ({product_id}) added to PnP database",
+        }
+
+    def get_global_credentials(self):
+        """
+        Fetch global credential IDs from Catalyst Center.
+
+        Returns:
+            dict with credential IDs by type, or error
+        """
+        cache_key = "catalyst_global_credentials"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        result = self._make_request("/dna/intent/api/v2/global-credential")
+        if "error" in result:
+            return result
+
+        resp = result.get("response", {})
+        credentials = {
+            "cli": [c["id"] for c in resp.get("cliCredential", [])],
+            "snmpv2_read": [c["id"] for c in resp.get("snmpV2cRead", [])],
+            "snmpv2_write": [c["id"] for c in resp.get("snmpV2cWrite", [])],
+            "snmpv3": [c["id"] for c in resp.get("snmpV3", [])],
+            "netconf": [c["id"] for c in resp.get("netconfCredential", [])],
+        }
+
+        # Cache for 10 minutes
+        cache.set(cache_key, credentials, 600)
+        return credentials
+
+    def add_network_device(self, ip_address):
+        """
+        Add a network device to Catalyst Center inventory using global credentials.
+
+        Uses the discovery API with global credential IDs already configured
+        in Catalyst Center, so no credentials need to be stored in the plugin.
+
+        Args:
+            ip_address: Device management IP address
+
+        Returns:
+            dict with success/task_id or error
+        """
+        if not ip_address:
+            return {"error": "IP address is required"}
+
+        # Fetch global credentials from Catalyst Center
+        creds = self.get_global_credentials()
+        if "error" in creds:
+            return {"error": f"Failed to fetch global credentials: {creds['error']}"}
+
+        # Collect all credential IDs
+        all_cred_ids = []
+        for cred_type in ("cli", "snmpv2_read", "snmpv2_write", "snmpv3", "netconf"):
+            all_cred_ids.extend(creds.get(cred_type, []))
+
+        if not all_cred_ids:
+            return {"error": "No global credentials configured in Catalyst Center"}
+
+        # Use the discovery API with Single IP type
+        payload = {
+            "name": f"NetBox-{ip_address}",
+            "discoveryType": "Single",
+            "ipAddressList": ip_address,
+            "protocolOrder": "ssh",
+            "preferredMgmtIPMethod": "UseLoopBack",
+            "globalCredentialIdList": all_cred_ids,
+            "retry": 3,
+            "timeout": 5,
+        }
+
+        endpoint = "/dna/intent/api/v1/discovery"
+        result = self._make_post_request(endpoint, payload)
+
+        if "error" in result:
+            return result
+
+        response = result.get("response", {})
+        task_id = response.get("taskId")
+
+        if not task_id:
+            return {"error": "No task ID returned from Catalyst Center"}
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "message": f"Discovery started for {ip_address} using global credentials (Task: {task_id})",
         }
 
 

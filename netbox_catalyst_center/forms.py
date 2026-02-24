@@ -11,8 +11,8 @@ class CatalystCenterSettingsForm(forms.Form):
     catalyst_center_url = forms.URLField(
         label="Catalyst Center URL",
         required=True,
-        help_text="Full URL to Catalyst Center (e.g., https://dnac.example.com)",
-        widget=forms.URLInput(attrs={"class": "form-control", "placeholder": "https://dnac.example.com"}),
+        help_text="Full URL to Catalyst Center (e.g., https://catalyst-center.example.com)",
+        widget=forms.URLInput(attrs={"class": "form-control", "placeholder": "https://catalyst-center.example.com"}),
     )
 
     catalyst_center_username = forms.CharField(

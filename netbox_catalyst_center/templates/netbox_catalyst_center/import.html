@@ -251,6 +251,26 @@
                 </p>
             </div>
         </div>
+
+        <!-- PnP CSV Export -->
+        <div class="card mt-3 border-primary">
+            <div class="card-header bg-primary text-white">
+                <h6 class="card-title mb-0">
+                    <i class="mdi mdi-file-export"></i> PnP CSV Export
+                </h6>
+            </div>
+            <div class="card-body">
+                <p class="card-text small mb-2">
+                    Download a Plug and Play CSV for Cisco devices in NetBox that are
+                    <strong>not</strong> in Catalyst Center. Import this CSV into
+                    Catalyst Center's PnP portal for bulk onboarding.
+                </p>
+                <a href="{% url 'plugins:netbox_catalyst_center:export_pnp_csv' %}"
+                   class="btn btn-outline-primary btn-sm w-100">
+                    <i class="mdi mdi-download"></i> Download PnP CSV
+                </a>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -340,7 +360,7 @@ document.getElementById('search-btn').addEventListener('click', function() {
             return;
         }
 
-        renderSearchResults(searchResults, data.total_in_dnac);
+        renderSearchResults(searchResults, data.total_in_cc);
         document.getElementById('search-results').style.display = 'block';
         document.getElementById('import-section').style.display = 'block';
     })

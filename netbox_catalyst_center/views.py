@@ -2,12 +2,21 @@
 Views for NetBox Catalyst Center Plugin
 
 Registers custom tabs on Device detail views to show Catalyst Center client info.
+Also supports netbox-endpoints plugin for endpoint tabs (if installed).
 Provides settings configuration UI.
 """
 
 import re
 
 from dcim.models import Device, InventoryItem, Manufacturer
+
+# Check if netbox_endpoints plugin is installed
+try:
+    from netbox_endpoints.models import Endpoint
+    ENDPOINTS_PLUGIN_INSTALLED = True
+except ImportError:
+    Endpoint = None
+    ENDPOINTS_PLUGIN_INSTALLED = False
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
@@ -127,6 +136,72 @@ def should_show_catalyst_tab(device):
     the required data for the lookup method.
     """
     lookup_method, has_data = get_device_lookup_method(device)
+    return lookup_method is not None and has_data
+
+
+def get_endpoint_lookup_method(endpoint):
+    """
+    Determine the lookup method for an endpoint based on configured mappings.
+
+    Endpoints always use MAC address lookup since they're wireless/wired clients.
+    The endpoint_mappings config controls which endpoint types show the tab.
+
+    Returns:
+        tuple: (lookup_method, has_required_data)
+    """
+    if not ENDPOINTS_PLUGIN_INSTALLED:
+        return None, False
+
+    if not endpoint.mac_address:
+        return None, False
+
+    if not endpoint.endpoint_type:
+        return None, False
+
+    config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+    mappings = config.get("endpoint_mappings", [])
+
+    # If no mappings configured, show for all endpoints with MAC address
+    if not mappings:
+        return "mac", True
+
+    # Get endpoint info for matching
+    manufacturer = endpoint.endpoint_type.manufacturer
+    manufacturer_name = manufacturer.name.lower() if manufacturer else ""
+    endpoint_type_model = endpoint.endpoint_type.model.lower() if endpoint.endpoint_type.model else ""
+
+    # Check if endpoint matches any mapping
+    for mapping in mappings:
+        mfr_pattern = mapping.get("manufacturer", "").lower()
+        type_pattern = mapping.get("endpoint_type", "").lower()
+
+        # Check manufacturer match
+        if mfr_pattern:
+            if not re.search(mfr_pattern, manufacturer_name, re.IGNORECASE):
+                continue
+
+        # Check endpoint type match (if specified)
+        if type_pattern:
+            if not re.search(type_pattern, endpoint_type_model, re.IGNORECASE):
+                continue
+
+        # Mapping matched - endpoints always use MAC lookup
+        return "mac", True
+
+    # No matching mapping found
+    return None, False
+
+
+def should_show_catalyst_tab_endpoint(endpoint):
+    """
+    Determine if the Catalyst Center tab should be visible for this endpoint.
+
+    Shows tab if endpoint matches configured endpoint_mappings (or if no mappings,
+    shows for all endpoints with MAC address).
+    """
+    if not ENDPOINTS_PLUGIN_INSTALLED:
+        return False
+    lookup_method, has_data = get_endpoint_lookup_method(endpoint)
     return lookup_method is not None and has_data
 
 
@@ -319,8 +394,8 @@ class DeviceCatalystCenterContentView(LoginRequiredMixin, PermissionRequiredMixi
         # Get Catalyst Center URL for external links
         catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
 
-        # Choose template based on data type
-        if client_data.get("is_network_device"):
+        # Choose template based on data type or lookup method (for error states)
+        if client_data.get("is_network_device") or lookup_method == "network_device":
             template = "netbox_catalyst_center/network_device_tab_content.html"
         else:
             template = "netbox_catalyst_center/client_tab_content.html"
@@ -337,6 +412,149 @@ class DeviceCatalystCenterContentView(LoginRequiredMixin, PermissionRequiredMixi
                 request=request,
             )
         )
+
+
+# Endpoint views - only registered if netbox_endpoints plugin is installed
+if ENDPOINTS_PLUGIN_INSTALLED:
+
+    @register_model_view(Endpoint, name="catalyst_center", path="catalyst-center")
+    class EndpointCatalystCenterView(generic.ObjectView):
+        """Display Catalyst Center client details for an Endpoint with async loading."""
+
+        queryset = Endpoint.objects.all()
+        template_name = "netbox_catalyst_center/endpoint_tab.html"
+
+        tab = ViewTab(
+            label="Catalyst Center",
+            weight=9000,
+            permission="netbox_endpoints.view_endpoint",
+            hide_if_empty=False,
+            visible=should_show_catalyst_tab_endpoint,
+        )
+
+        def get(self, request, pk):
+            """Render initial tab with loading spinner - content loads via htmx."""
+            endpoint = Endpoint.objects.get(pk=pk)
+            return render(
+                request,
+                self.template_name,
+                {
+                    "object": endpoint,
+                    "tab": self.tab,
+                    "loading": True,
+                },
+            )
+
+    class EndpointCatalystCenterContentView(LoginRequiredMixin, PermissionRequiredMixin, View):
+        """HTMX endpoint that returns Catalyst Center content for async loading."""
+
+        permission_required = "netbox_endpoints.view_endpoint"
+
+        def get(self, request, pk):
+            """Fetch Catalyst Center data and return HTML content."""
+            endpoint = Endpoint.objects.select_related(
+                "endpoint_type__manufacturer", "site", "primary_ip4"
+            ).get(pk=pk)
+
+            client = get_client()
+            config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+
+            client_data = {}
+            error = None
+
+            if not client:
+                error = "Catalyst Center not configured. Please configure the plugin in NetBox settings."
+            else:
+                # Endpoints use MAC address lookup
+                mac_address = str(endpoint.mac_address) if endpoint.mac_address else None
+                if mac_address:
+                    client_data = client.get_client_detail(mac_address)
+                    if "error" in client_data:
+                        error = client_data.get("error")
+                        client_data = {}
+                else:
+                    error = "No MAC address found on endpoint."
+
+            # Get Catalyst Center URL for external links
+            catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
+
+            return HttpResponse(
+                render_to_string(
+                    "netbox_catalyst_center/client_tab_content.html",
+                    {
+                        "object": endpoint,
+                        "client_data": client_data,
+                        "error": error,
+                        "catalyst_url": catalyst_url,
+                    },
+                    request=request,
+                )
+            )
+
+    class SyncEndpointFromDNACView(View):
+        """Sync endpoint data from Catalyst Center to NetBox."""
+
+        def post(self, request, pk):
+            """Sync IP address from Catalyst Center to NetBox endpoint."""
+            from ipam.models import IPAddress
+            from netbox_endpoints.models import Endpoint
+
+            try:
+                endpoint = Endpoint.objects.get(pk=pk)
+            except Endpoint.DoesNotExist:
+                return JsonResponse({"success": False, "error": "Endpoint not found"}, status=404)
+
+            client = get_client()
+            if not client:
+                return JsonResponse(
+                    {"success": False, "error": "Catalyst Center not configured"},
+                    status=400,
+                )
+
+            # Get client data from Catalyst Center using MAC address
+            mac_address = str(endpoint.mac_address) if endpoint.mac_address else None
+            if not mac_address:
+                return JsonResponse({"success": False, "error": "No MAC address on endpoint"}, status=400)
+
+            dnac_data = client.get_client_detail(mac_address)
+
+            if "error" in dnac_data:
+                return JsonResponse({"success": False, "error": dnac_data["error"]}, status=400)
+
+            changes = []
+            dnac_ip = dnac_data.get("ip_address")
+
+            if dnac_ip:
+                # Try to find or create the IP address
+                try:
+                    # Search for existing IP
+                    ip_obj = IPAddress.objects.filter(address__startswith=dnac_ip).first()
+
+                    if not ip_obj:
+                        # Create new IP address
+                        ip_obj = IPAddress.objects.create(
+                            address=f"{dnac_ip}/32",
+                            description=f"Synced from Catalyst Center for {endpoint}",
+                        )
+                        changes.append(f"Created IP address {dnac_ip}")
+
+                    # Update endpoint's primary_ip4
+                    if endpoint.primary_ip4 != ip_obj:
+                        endpoint.primary_ip4 = ip_obj
+                        endpoint.save()
+                        changes.append(f"Set primary IPv4 to {dnac_ip}")
+
+                except Exception as e:
+                    return JsonResponse({"success": False, "error": f"Failed to sync IP: {e}"}, status=500)
+
+            if not changes:
+                changes.append("No changes needed")
+
+            return JsonResponse({
+                "success": True,
+                "changes": changes,
+                "message": "; ".join(changes),
+            })
 
 
 class CatalystCenterSettingsView(View):
@@ -430,7 +648,7 @@ class SyncDeviceFromDNACView(View):
 
     def post(self, request, pk):
         """
-        Sync selected fields from DNAC to NetBox device.
+        Sync selected fields from Catalyst Center to NetBox device.
 
         Supports syncing: IP address, serial number, SNMP location, device type,
         platform (software type/version), custom fields, and interfaces.
@@ -485,7 +703,7 @@ class SyncDeviceFromDNACView(View):
                 status=400,
             )
 
-        # Get device data from DNAC
+        # Get device data from Catalyst Center
         lookup_method, _ = get_device_lookup_method(device)
 
         if lookup_method == "network_device":
@@ -507,7 +725,7 @@ class SyncDeviceFromDNACView(View):
                 return JsonResponse({"success": False, "error": "No MAC address found"}, status=400)
         else:
             return JsonResponse(
-                {"success": False, "error": "Device not configured for DNAC lookup"},
+                {"success": False, "error": "Device not configured for Catalyst Center lookup"},
                 status=400,
             )
 
@@ -523,10 +741,12 @@ class SyncDeviceFromDNACView(View):
             if dnac_ip:
                 ip_result = self._sync_ip_address(device, dnac_ip)
                 if ip_result.get("error"):
-                    return JsonResponse({"success": False, "error": ip_result["error"]}, status=400)
-                changes.extend(ip_result.get("changes", []))
-                if ip_result.get("changed"):
-                    device_changed = True
+                    # Non-fatal: skip IP sync but continue with other fields
+                    changes.append(f"IP skipped: {ip_result['error']}")
+                else:
+                    changes.extend(ip_result.get("changes", []))
+                    if ip_result.get("changed"):
+                        device_changed = True
 
         # Sync serial number
         if sync_serial:
@@ -638,8 +858,9 @@ class SyncDeviceFromDNACView(View):
                     device_changed = True
 
         # Sync custom fields (individual fields)
+        pending_tag = None
         if sync_cc_id or sync_cc_series or sync_cc_role:
-            cf_changes = self._sync_custom_fields(device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role)
+            cf_changes, pending_tag = self._sync_custom_fields(device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role)
             changes.extend(cf_changes)
             if cf_changes:
                 device_changed = True
@@ -647,6 +868,18 @@ class SyncDeviceFromDNACView(View):
         # Save device if any changes were made
         if device_changed:
             device.save()
+
+        # Add tag AFTER device.save() — M2M .add() triggers signals that can
+        # refresh the device from DB, discarding unsaved in-memory changes
+        if pending_tag:
+            device.tags.add(pending_tag)
+
+        # Invalidate Catalyst Center cache so the page reload gets fresh data
+        from django.core.cache import cache as django_cache
+
+        lookup_hostname = device.virtual_chassis.name if device.virtual_chassis else device.name
+        django_cache.delete(f"catalyst_device_{lookup_hostname}")
+        django_cache.delete("catalyst_all_devices")
 
         # Sync interfaces (after device save, as interfaces are separate objects)
         if sync_interfaces:
@@ -690,11 +923,12 @@ class SyncDeviceFromDNACView(View):
         )
 
     def _sync_custom_fields(self, device, dnac_data, sync_id=True, sync_series=True, sync_role=True):
-        """Sync Catalyst Center custom fields. Returns list of change descriptions."""
+        """Sync Catalyst Center custom fields. Returns list of change descriptions and pending tag."""
         from django.utils import timezone
         from extras.models import Tag
 
         changes = []
+        pending_tag = None  # Defer tags.add() to after device.save()
 
         # Sync individual fields based on flags
         if sync_id:
@@ -705,7 +939,8 @@ class SyncDeviceFromDNACView(View):
                     device.custom_field_data["cc_device_id"] = new_id
                     changes.append(f"Catalyst Center ID: {new_id[:20]}...")
 
-                # Add Catalyst Center tag when cc_device_id is synced
+                # Prepare Catalyst Center tag (added after device.save() to avoid
+                # M2M signal refreshing the device and discarding in-memory changes)
                 cc_tag, _ = Tag.objects.get_or_create(
                     slug="catalyst-center",
                     defaults={
@@ -715,7 +950,7 @@ class SyncDeviceFromDNACView(View):
                     },
                 )
                 if cc_tag not in device.tags.all():
-                    device.tags.add(cc_tag)
+                    pending_tag = cc_tag
                     changes.append("Tag: catalyst-center (added)")
 
         if sync_series:
@@ -739,10 +974,17 @@ class SyncDeviceFromDNACView(View):
             device.custom_field_data["cc_last_sync"] = timezone.now().isoformat()
             changes.append(f"cc_last_sync: {timezone.now().strftime('%Y-%m-%d %H:%M')}")
 
-        return changes
+        return changes, pending_tag
 
     def _sync_ip_address(self, device, dnac_ip):
-        """Sync IP address from DNAC to device. Returns dict with changes and error."""
+        """Sync IP address from Catalyst Center to device. Returns dict with changes and error."""
+        import ipaddress as ipaddress_mod
+
+        try:
+            ipaddress_mod.ip_address(dnac_ip)
+        except ValueError:
+            return {"error": f"Catalyst Center returned '{dnac_ip}' as the management IP, which is not a valid IP address. Skipping IP sync."}
+
         ip_with_prefix = f"{dnac_ip}/32"
         existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
         changes = []
@@ -2039,6 +2281,172 @@ class SyncDeviceFromDNACView(View):
             logging.getLogger(__name__).warning(f"Failed to create POE journal entry: {e}")
 
 
+class AddDeviceToPnPView(View):
+    """Add a NetBox device to Catalyst Center PnP database."""
+
+    def post(self, request, pk):
+        try:
+            device = Device.objects.select_related("device_type").get(pk=pk)
+        except Device.DoesNotExist:
+            return JsonResponse({"success": False, "error": "Device not found"}, status=404)
+
+        serial = device.serial
+        product_id = device.device_type.model if device.device_type else ""
+        hostname = device.name or ""
+
+        if not serial:
+            return JsonResponse(
+                {"success": False, "error": "Device has no serial number"},
+                status=400,
+            )
+        if not product_id:
+            return JsonResponse(
+                {"success": False, "error": "Device has no product ID (device type model)"},
+                status=400,
+            )
+
+        client = get_client()
+        if not client:
+            return JsonResponse(
+                {"success": False, "error": "Catalyst Center not configured"},
+                status=400,
+            )
+
+        result = client.add_device_pnp(serial, product_id, hostname=hostname)
+
+        if "error" in result:
+            return JsonResponse({"success": False, "error": result["error"]}, status=400)
+
+        return JsonResponse({"success": True, "message": result.get("message", "Device added to PnP")})
+
+
+class AddDeviceToInventoryView(View):
+    """Add a NetBox device to Catalyst Center inventory."""
+
+    def post(self, request, pk):
+        try:
+            device = Device.objects.select_related("primary_ip4", "primary_ip6").get(pk=pk)
+        except Device.DoesNotExist:
+            return JsonResponse({"success": False, "error": "Device not found"}, status=404)
+
+        ip_address = None
+        if device.primary_ip4:
+            ip_address = str(device.primary_ip4.address.ip)
+        elif device.primary_ip6:
+            ip_address = str(device.primary_ip6.address.ip)
+
+        if not ip_address:
+            return JsonResponse(
+                {"success": False, "error": "Device has no primary IP address"},
+                status=400,
+            )
+
+        client = get_client()
+        if not client:
+            return JsonResponse(
+                {"success": False, "error": "Catalyst Center not configured"},
+                status=400,
+            )
+
+        result = client.add_network_device(ip_address=ip_address)
+
+        if "error" in result:
+            return JsonResponse({"success": False, "error": result["error"]}, status=400)
+
+        return JsonResponse({
+            "success": True,
+            "message": result.get("message", "Device add request submitted"),
+            "task_id": result.get("task_id"),
+        })
+
+
+class ExportPnPCSVView(View):
+    """Export a PnP CSV file for NetBox devices not in Catalyst Center."""
+
+    def get(self, request):
+        import csv
+        import io
+
+        from .catalyst_client import CatalystCenterClient
+
+        client = get_client()
+        if not client:
+            return JsonResponse({"error": "Catalyst Center not configured"}, status=400)
+
+        # Fetch all CC devices
+        cc_result = client.search_devices("hostname", "*", limit=10000)
+        if "error" in cc_result:
+            return JsonResponse(
+                {"error": f"Failed to fetch CC inventory: {cc_result['error']}"},
+                status=400,
+            )
+
+        cc_devices = cc_result.get("devices", [])
+
+        # Build lookup sets
+        cc_hostnames = set()
+        cc_ips = set()
+        for d in cc_devices:
+            hostname = d.get("hostname", "")
+            if hostname:
+                cc_hostnames.add(CatalystCenterClient._strip_domain(hostname.lower()))
+            ip = d.get("management_ip", "")
+            if ip:
+                cc_ips.add(ip)
+
+        # Get Cisco devices from NetBox
+        cisco_mfrs = Manufacturer.objects.filter(slug__icontains="cisco")
+        nb_devices = (
+            Device.objects.filter(device_type__manufacturer__in=cisco_mfrs)
+            .select_related("primary_ip4", "device_type", "site")
+        )
+
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        missing_devices = []
+        for device in nb_devices:
+            nb_hostname = (device.name or "").lower()
+            if config.get("strip_domain", True):
+                nb_hostname = nb_hostname.split(".")[0]
+            nb_ip = str(device.primary_ip4.address.ip) if device.primary_ip4 else ""
+
+            if nb_hostname not in cc_hostnames and nb_ip not in cc_ips:
+                missing_devices.append(device)
+
+        # Generate CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "Serial Number*", "Product ID*", "Device Name", "Site",
+            "Profile*", "ManagementIP*", "SubnetMask*", "Gateway*",
+            "VlanID", "Interface Name*",
+        ])
+
+        for device in missing_devices:
+            ip = str(device.primary_ip4.address.ip) if device.primary_ip4 else ""
+            mask = ""
+            if device.primary_ip4:
+                prefix_len = device.primary_ip4.address.prefixlen
+                bits = (0xFFFFFFFF >> (32 - int(prefix_len))) << (32 - int(prefix_len))
+                mask = f"{(bits >> 24) & 0xFF}.{(bits >> 16) & 0xFF}.{(bits >> 8) & 0xFF}.{bits & 0xFF}"
+
+            writer.writerow([
+                device.serial or "",
+                device.device_type.model if device.device_type else "",
+                device.name or "",
+                f"Global/{device.site.name}" if device.site else "",
+                "",  # Profile
+                ip,
+                mask,
+                "",  # Gateway
+                "",  # VlanID
+                "",  # Interface Name
+            ])
+
+        response = HttpResponse(output.getvalue(), content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="pnp_import.csv"'
+        return response
+
+
 class ImportPageView(View):
     """Dedicated page for searching and importing devices from Catalyst Center."""
 
@@ -2538,7 +2946,7 @@ class ImportDevicesView(View):
                     defaults={"slug": "cisco-unknown"},
                 )
 
-            # Determine device role from DNAC data if no default specified
+            # Determine device role from Catalyst Center data if no default specified
             # Priority: device_family > role
             role = default_role
             if not role:
