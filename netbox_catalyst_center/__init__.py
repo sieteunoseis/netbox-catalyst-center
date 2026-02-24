@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +195,10 @@ class CatalystCenterConfig(PluginConfig):
 
             # Check if already registered
             from utilities.views import registry
-            views_dict = registry.get('views', {})
-            endpoint_views = views_dict.get('netbox_endpoints', {}).get('endpoint', [])
-            if any(v.get('name') == 'catalyst_center' for v in endpoint_views):
+
+            views_dict = registry.get("views", {})
+            endpoint_views = views_dict.get("netbox_endpoints", {}).get("endpoint", [])
+            if any(v.get("name") == "catalyst_center" for v in endpoint_views):
                 return  # Already registered
 
             @register_model_view(Endpoint, name="catalyst_center", path="catalyst-center")

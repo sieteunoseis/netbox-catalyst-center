@@ -13,6 +13,7 @@ from dcim.models import Device, InventoryItem, Manufacturer
 # Check if netbox_endpoints plugin is installed
 try:
     from netbox_endpoints.models import Endpoint
+
     ENDPOINTS_PLUGIN_INSTALLED = True
 except ImportError:
     Endpoint = None
@@ -452,9 +453,7 @@ if ENDPOINTS_PLUGIN_INSTALLED:
 
         def get(self, request, pk):
             """Fetch Catalyst Center data and return HTML content."""
-            endpoint = Endpoint.objects.select_related(
-                "endpoint_type__manufacturer", "site", "primary_ip4"
-            ).get(pk=pk)
+            endpoint = Endpoint.objects.select_related("endpoint_type__manufacturer", "site", "primary_ip4").get(pk=pk)
 
             client = get_client()
             config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
@@ -550,11 +549,13 @@ if ENDPOINTS_PLUGIN_INSTALLED:
             if not changes:
                 changes.append("No changes needed")
 
-            return JsonResponse({
-                "success": True,
-                "changes": changes,
-                "message": "; ".join(changes),
-            })
+            return JsonResponse(
+                {
+                    "success": True,
+                    "changes": changes,
+                    "message": "; ".join(changes),
+                }
+            )
 
 
 class CatalystCenterSettingsView(View):
@@ -860,7 +861,9 @@ class SyncDeviceFromDNACView(View):
         # Sync custom fields (individual fields)
         pending_tag = None
         if sync_cc_id or sync_cc_series or sync_cc_role:
-            cf_changes, pending_tag = self._sync_custom_fields(device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role)
+            cf_changes, pending_tag = self._sync_custom_fields(
+                device, dnac_data, sync_cc_id, sync_cc_series, sync_cc_role
+            )
             changes.extend(cf_changes)
             if cf_changes:
                 device_changed = True
@@ -983,7 +986,9 @@ class SyncDeviceFromDNACView(View):
         try:
             ipaddress_mod.ip_address(dnac_ip)
         except ValueError:
-            return {"error": f"Catalyst Center returned '{dnac_ip}' as the management IP, which is not a valid IP address. Skipping IP sync."}
+            return {
+                "error": f"Catalyst Center returned '{dnac_ip}' as the management IP, which is not a valid IP address. Skipping IP sync."
+            }
 
         ip_with_prefix = f"{dnac_ip}/32"
         existing_ip = IPAddress.objects.filter(address=ip_with_prefix).first()
@@ -2353,11 +2358,13 @@ class AddDeviceToInventoryView(View):
         if "error" in result:
             return JsonResponse({"success": False, "error": result["error"]}, status=400)
 
-        return JsonResponse({
-            "success": True,
-            "message": result.get("message", "Device add request submitted"),
-            "task_id": result.get("task_id"),
-        })
+        return JsonResponse(
+            {
+                "success": True,
+                "message": result.get("message", "Device add request submitted"),
+                "task_id": result.get("task_id"),
+            }
+        )
 
 
 class ExportPnPCSVView(View):
@@ -2396,9 +2403,8 @@ class ExportPnPCSVView(View):
 
         # Get Cisco devices from NetBox
         cisco_mfrs = Manufacturer.objects.filter(slug__icontains="cisco")
-        nb_devices = (
-            Device.objects.filter(device_type__manufacturer__in=cisco_mfrs)
-            .select_related("primary_ip4", "device_type", "site")
+        nb_devices = Device.objects.filter(device_type__manufacturer__in=cisco_mfrs).select_related(
+            "primary_ip4", "device_type", "site"
         )
 
         config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
@@ -2415,11 +2421,20 @@ class ExportPnPCSVView(View):
         # Generate CSV
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow([
-            "Serial Number*", "Product ID*", "Device Name", "Site",
-            "Profile*", "ManagementIP*", "SubnetMask*", "Gateway*",
-            "VlanID", "Interface Name*",
-        ])
+        writer.writerow(
+            [
+                "Serial Number*",
+                "Product ID*",
+                "Device Name",
+                "Site",
+                "Profile*",
+                "ManagementIP*",
+                "SubnetMask*",
+                "Gateway*",
+                "VlanID",
+                "Interface Name*",
+            ]
+        )
 
         for device in missing_devices:
             ip = str(device.primary_ip4.address.ip) if device.primary_ip4 else ""
@@ -2429,18 +2444,20 @@ class ExportPnPCSVView(View):
                 bits = (0xFFFFFFFF >> (32 - int(prefix_len))) << (32 - int(prefix_len))
                 mask = f"{(bits >> 24) & 0xFF}.{(bits >> 16) & 0xFF}.{(bits >> 8) & 0xFF}.{bits & 0xFF}"
 
-            writer.writerow([
-                device.serial or "",
-                device.device_type.model if device.device_type else "",
-                device.name or "",
-                f"Global/{device.site.name}" if device.site else "",
-                "",  # Profile
-                ip,
-                mask,
-                "",  # Gateway
-                "",  # VlanID
-                "",  # Interface Name
-            ])
+            writer.writerow(
+                [
+                    device.serial or "",
+                    device.device_type.model if device.device_type else "",
+                    device.name or "",
+                    f"Global/{device.site.name}" if device.site else "",
+                    "",  # Profile
+                    ip,
+                    mask,
+                    "",  # Gateway
+                    "",  # VlanID
+                    "",  # Interface Name
+                ]
+            )
 
         response = HttpResponse(output.getvalue(), content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="pnp_import.csv"'

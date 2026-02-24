@@ -37,7 +37,9 @@ urlpatterns = [
 if ENDPOINTS_PLUGIN_INSTALLED:
     from .views import EndpointCatalystCenterContentView, SyncEndpointFromDNACView
 
-    urlpatterns.extend([
-        path("endpoint/<int:pk>/content/", EndpointCatalystCenterContentView.as_view(), name="endpoint_content"),
-        path("sync-endpoint/<int:pk>/", SyncEndpointFromDNACView.as_view(), name="sync_endpoint"),
-    ])
+    urlpatterns.extend(
+        [
+            path("endpoint/<int:pk>/content/", EndpointCatalystCenterContentView.as_view(), name="endpoint_content"),
+            path("sync-endpoint/<int:pk>/", SyncEndpointFromDNACView.as_view(), name="sync_endpoint"),
+        ]
+    )

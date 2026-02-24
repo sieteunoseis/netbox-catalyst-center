@@ -41,6 +41,7 @@ class CatalystCenterClient:
         if not value:
             return None
         import ipaddress
+
         try:
             ipaddress.ip_address(value)
             return value
@@ -1092,7 +1093,7 @@ class CatalystCenterClient:
             match = False
 
             if search_type == "hostname":
-                hostname = (device.get("hostname") or "")
+                hostname = device.get("hostname") or ""
                 # Also check without domain suffix
                 hostname_base = self._strip_domain(hostname.lower())
                 if pattern.search(hostname) or pattern.search(hostname_base):
