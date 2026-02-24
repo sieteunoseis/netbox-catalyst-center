@@ -5,11 +5,11 @@ URL patterns for NetBox Catalyst Center Plugin
 from django.urls import path
 
 from .views import (
+    ENDPOINTS_PLUGIN_INSTALLED,
     AddDeviceToInventoryView,
     AddDeviceToPnPView,
     CatalystCenterSettingsView,
     DeviceCatalystCenterContentView,
-    ENDPOINTS_PLUGIN_INSTALLED,
     ExportPnPCSVView,
     ImportDevicesView,
     ImportPageView,

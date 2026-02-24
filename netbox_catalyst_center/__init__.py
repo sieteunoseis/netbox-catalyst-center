@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 
 logger = logging.getLogger(__name__)
 
@@ -186,15 +186,14 @@ class CatalystCenterConfig(PluginConfig):
     def _register_endpoint_views(self):
         """Register Catalyst Center tab for Endpoints if plugin is installed."""
         try:
-            from netbox_endpoints.models import Endpoint
-            from utilities.views import ViewTab, register_model_view
-            from netbox.views import generic
             from django.shortcuts import render
-
-            from .views import should_show_catalyst_tab_endpoint
+            from netbox.views import generic
+            from netbox_endpoints.models import Endpoint
 
             # Check if already registered
-            from utilities.views import registry
+            from utilities.views import ViewTab, register_model_view, registry
+
+            from .views import should_show_catalyst_tab_endpoint
 
             views_dict = registry.get("views", {})
             endpoint_views = views_dict.get("netbox_endpoints", {}).get("endpoint", [])
