@@ -1378,10 +1378,6 @@ class SyncDeviceFromDNACView(View):
             # Determine which device this interface belongs to
             member_num = parse_interface_stack_member(iface_name)
 
-            import logging
-
-            logger = logging.getLogger(__name__)
-
             if member_num is None:
                 # Logical interface goes to master
                 target_device = master_device
