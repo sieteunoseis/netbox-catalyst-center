@@ -3465,21 +3465,15 @@ class ConfigAuditView(LoginRequiredMixin, PermissionRequiredMixin, View):
                     audit.get_report()
                     audit_html = console.export_html(inline_styles=True)
 
-                    body_match = re.search(
-                        r"<body[^>]*>(.*?)</body>", audit_html, re.DOTALL
-                    )
+                    body_match = re.search(r"<body[^>]*>(.*?)</body>", audit_html, re.DOTALL)
                     if body_match:
                         audit_html = body_match.group(1).strip()
-                    audit_html = re.sub(
-                        r"<(?!/?(span|pre|code|br)\b)", "&lt;", audit_html
-                    )
+                    audit_html = re.sub(r"<(?!/?(span|pre|code|br)\b)", "&lt;", audit_html)
                     audit_html = audit_html.replace(
                         "background-color: #ffffff", "background-color: transparent"
                     ).replace("color: #000000", "color: inherit")
                 else:
-                    error = config_data.get(
-                        "error", f"No config available for {device_name}"
-                    )
+                    error = config_data.get("error", f"No config available for {device_name}")
             except ImportError:
                 error = "ciscoconfaudit package not installed. Add ciscoconfaudit>=0.2.0 to requirements-extra.txt."
             except Exception as e:

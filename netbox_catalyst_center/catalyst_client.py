@@ -1433,9 +1433,7 @@ class CatalystCenterClient:
             "commands": ["show running-config"],
             "deviceUuids": [device_id],
         }
-        cmd_result = self._make_post_request(
-            "/dna/intent/api/v1/network-device-poller/cli/read-request", payload
-        )
+        cmd_result = self._make_post_request("/dna/intent/api/v1/network-device-poller/cli/read-request", payload)
         if "error" in cmd_result:
             return cmd_result
 
