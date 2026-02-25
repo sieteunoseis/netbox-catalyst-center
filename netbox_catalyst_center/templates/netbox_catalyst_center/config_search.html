@@ -1,0 +1,124 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+
+{% block title %}Catalyst Center Config Search{% endblock %}
+
+{% block header %}
+<h1 class="ps-3 pt-2"><i class="mdi mdi-magnify"></i> Catalyst Center Config Search</h1>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-magnify"></i> Search Device Configurations
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="get" class="row g-3 align-items-end">
+                    <div class="col-md-8">
+                        <label for="q" class="form-label">Search Term</label>
+                        <input type="text" class="form-control" id="q" name="q" value="{{ query }}"
+                               placeholder="e.g., logging host, ntp server, access-list">
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="mdi mdi-magnify"></i> Search
+                        </button>
+                        {% if query %}
+                        <a href="{% url 'plugins:netbox_catalyst_center:config_search' %}" class="btn btn-outline-secondary">
+                            <i class="mdi mdi-close"></i> Clear
+                        </a>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">
+    <i class="mdi mdi-alert-circle"></i> {{ error }}
+</div>
+{% endif %}
+
+{% if query %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-format-list-bulleted"></i>
+                    Results for "<strong>{{ query }}</strong>"
+                </h5>
+                <span class="badge text-bg-primary">{{ result_count }} device{{ result_count|pluralize }}</span>
+            </div>
+            <div class="card-body">
+                {% if results %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Device</th>
+                                <th>Series</th>
+                                <th>Status</th>
+                                <th>Matches</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for result in results %}
+                            <tr>
+                                <td>
+                                    {% if result.device_url %}
+                                    <a href="{{ result.device_url }}">{{ result.name }}</a>
+                                    {% else %}
+                                    {{ result.name }}
+                                    {% endif %}
+                                </td>
+                                <td>{{ result.series|default:"-" }}</td>
+                                <td>
+                                    {% if result.reachability_status == "Reachable" %}
+                                    <span class="badge text-bg-success">{{ result.reachability_status }}</span>
+                                    {% elif result.reachability_status == "Unreachable" %}
+                                    <span class="badge text-bg-danger">{{ result.reachability_status }}</span>
+                                    {% else %}
+                                    <span class="badge text-bg-secondary">{{ result.reachability_status|default:"unknown" }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge text-bg-info">{{ result.match_count }} match{{ result.match_count|pluralize:"es" }}</span>
+                                </td>
+                                <td>
+                                    {% if catalyst_url and result.device_id %}
+                                    <a href="{{ catalyst_url }}/dna/assurance/device/details?id={{ result.device_id }}" target="_blank" class="btn btn-sm btn-outline-primary" title="Open in Catalyst Center">
+                                        <i class="mdi mdi-open-in-new"></i>
+                                    </a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="5" class="p-0">
+                                    <pre class="mb-0 p-2 bg-body-tertiary" style="font-size: 0.75rem; max-height: 200px; overflow: auto;">{% for line in result.matching_lines %}<span class="text-muted" style="user-select: none;">{{ line.number|stringformat:"4d" }} </span>{{ line.text }}
+{% endfor %}{% if result.match_count > 10 %}<span class="text-muted">... and {{ result.match_count|add:"-10" }} more matches</span>{% endif %}</pre>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-muted text-center py-4">
+                    <i class="mdi mdi-magnify" style="font-size: 2rem;"></i>
+                    <p class="mt-2">No devices found matching "{{ query }}"</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

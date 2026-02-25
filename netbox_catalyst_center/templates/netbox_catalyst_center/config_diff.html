@@ -1,0 +1,164 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+
+{% block title %}Catalyst Center Config Diff{% endblock %}
+
+{% block header %}
+<h1 class="ps-3 pt-2"><i class="mdi mdi-file-compare"></i> Catalyst Center Config Diff</h1>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-file-compare"></i> Compare Device Configurations
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="get" class="row g-3 align-items-end">
+                    <div class="col-md-5">
+                        <label for="device_a" class="form-label">Device A</label>
+                        <select class="form-select" id="device_a" name="device_a">
+                            <option value="">-- Select device --</option>
+                            {% for name, did in device_list %}
+                            <option value="{{ did }}" {% if did == device_a %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-5">
+                        <label for="device_b" class="form-label">Device B</label>
+                        <select class="form-select" id="device_b" name="device_b">
+                            <option value="">-- Select device --</option>
+                            {% for name, did in device_list %}
+                            <option value="{{ did }}" {% if did == device_b %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="mdi mdi-file-compare"></i> Compare
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">
+    <i class="mdi mdi-alert-circle"></i> {{ error }}
+</div>
+{% endif %}
+
+{% if device_a and device_b %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-file-compare"></i>
+                    {{ device_a_name }} vs {{ device_b_name }}
+                </h5>
+                <div>
+                    {% if catalyst_url %}
+                    <a href="{{ catalyst_url }}/dna/assurance/device/details?id={{ device_a }}" target="_blank" class="btn btn-sm btn-outline-primary" title="Open {{ device_a_name }} in Catalyst Center">
+                        <i class="mdi mdi-open-in-new"></i> {{ device_a_name }}
+                    </a>
+                    <a href="{{ catalyst_url }}/dna/assurance/device/details?id={{ device_b }}" target="_blank" class="btn btn-sm btn-outline-primary" title="Open {{ device_b_name }} in Catalyst Center">
+                        <i class="mdi mdi-open-in-new"></i> {{ device_b_name }}
+                    </a>
+                    {% endif %}
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleView('unified')" id="btn-unified">
+                        <i class="mdi mdi-format-align-left"></i> Unified
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleView('side-by-side')" id="btn-sbs">
+                        <i class="mdi mdi-arrow-split-vertical"></i> Side-by-Side
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                {% if diff_html %}
+                <style>
+                    .diff-removed { background-color: rgba(var(--bs-danger-rgb), 0.15); color: var(--bs-danger); }
+                    .diff-added { background-color: rgba(var(--bs-success-rgb), 0.15); color: var(--bs-success); }
+                    .diff-hunk { color: var(--bs-purple, #6f42c1); }
+                </style>
+                {# Unified diff view #}
+                <div id="unified-view">
+                    <pre class="mb-0 p-3" style="font-size: 0.75rem; overflow: auto; max-height: 700px;">{% for line in diff_html.splitlines %}{% if line|slice:":3" == "---" %}<span style="font-weight: bold;">{{ line }}</span>
+{% elif line|slice:":3" == "+++" %}<span style="font-weight: bold;">{{ line }}</span>
+{% elif line|slice:":2" == "@@" %}<span class="diff-hunk">{{ line }}</span>
+{% elif line|slice:":1" == "-" %}<span class="diff-removed">{{ line }}</span>
+{% elif line|slice:":1" == "+" %}<span class="diff-added">{{ line }}</span>
+{% else %}{{ line }}
+{% endif %}{% endfor %}</pre>
+                </div>
+
+                {# Side-by-side view (hidden by default) #}
+                <div id="sbs-view" style="display: none;">
+                    <div class="row g-0">
+                        <div class="col-6 border-end">
+                            <div class="bg-body-tertiary px-3 py-2 border-bottom" style="font-size: 0.8rem;">
+                                <strong>{{ device_a_name }}</strong>
+                            </div>
+                            <pre class="mb-0 p-3" style="font-size: 0.75rem; overflow: auto; max-height: 700px;">{{ config_a }}</pre>
+                        </div>
+                        <div class="col-6">
+                            <div class="bg-body-tertiary px-3 py-2 border-bottom" style="font-size: 0.8rem;">
+                                <strong>{{ device_b_name }}</strong>
+                            </div>
+                            <pre class="mb-0 p-3" style="font-size: 0.75rem; overflow: auto; max-height: 700px;">{{ config_b }}</pre>
+                        </div>
+                    </div>
+                </div>
+                {% elif config_a and config_b %}
+                <div class="text-center py-4 text-muted">
+                    <i class="mdi mdi-check-circle" style="font-size: 2rem; color: #198754;"></i>
+                    <p class="mt-2">Configurations are identical</p>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="mdi mdi-alert" style="font-size: 2rem;"></i>
+                    <p class="mt-2">Could not load configurations for comparison</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function toggleView(view) {
+    const unified = document.getElementById('unified-view');
+    const sbs = document.getElementById('sbs-view');
+    const btnUnified = document.getElementById('btn-unified');
+    const btnSbs = document.getElementById('btn-sbs');
+
+    if (!unified || !sbs) return;
+
+    if (view === 'side-by-side') {
+        unified.style.display = 'none';
+        sbs.style.display = 'block';
+        btnSbs.classList.replace('btn-outline-secondary', 'btn-secondary');
+        btnUnified.classList.replace('btn-secondary', 'btn-outline-secondary');
+    } else {
+        unified.style.display = 'block';
+        sbs.style.display = 'none';
+        btnUnified.classList.replace('btn-outline-secondary', 'btn-secondary');
+        btnSbs.classList.replace('btn-secondary', 'btn-outline-secondary');
+    }
+}
+
+// Set initial state
+document.addEventListener('DOMContentLoaded', function() {
+    const btnUnified = document.getElementById('btn-unified');
+    if (btnUnified) {
+        btnUnified.classList.replace('btn-outline-secondary', 'btn-secondary');
+    }
+});
+</script>
+{% endblock %}

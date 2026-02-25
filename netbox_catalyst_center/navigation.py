@@ -23,6 +23,21 @@ menu = PluginMenu(
             ),
         ),
         (
+            "Configs",
+            (
+                PluginMenuItem(
+                    link="plugins:netbox_catalyst_center:config_diff",
+                    link_text="Config Diff",
+                    permissions=["dcim.view_device"],
+                ),
+                PluginMenuItem(
+                    link="plugins:netbox_catalyst_center:config_audit",
+                    link_text="Config Audit",
+                    permissions=["dcim.view_device"],
+                ),
+            ),
+        ),
+        (
             "Settings",
             (
                 PluginMenuItem(

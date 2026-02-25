@@ -1370,6 +1370,156 @@ class CatalystCenterClient:
             "message": f"Discovery started for {ip_address} using global credentials (Task: {task_id})",
         }
 
+    def _get_all_devices(self):
+        """Get all network devices with caching.
+
+        Returns:
+            list of device dicts from Catalyst Center API.
+        """
+        cache_key = "catalyst_all_devices"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        endpoint = "/dna/intent/api/v1/network-device"
+        all_devices = []
+        offset = 1
+        page_size = 500
+        max_pages = 20
+
+        for _ in range(max_pages):
+            params = {"offset": offset, "limit": page_size}
+            page_result = self._make_request(endpoint, params)
+            if "error" in page_result:
+                break
+            page_devices = page_result.get("response", [])
+            if not page_devices:
+                break
+            all_devices.extend(page_devices)
+            if len(page_devices) < page_size:
+                break
+            offset += page_size
+
+        if all_devices:
+            cache.set(cache_key, all_devices, 300)
+
+        return all_devices
+
+    def get_device_config(self, device_id):
+        """Get running config for a device via Command Runner API.
+
+        Submits 'show running-config' via the CLI poller, polls the task
+        for completion, then downloads the result file.
+
+        Args:
+            device_id: Catalyst Center device UUID.
+
+        Returns:
+            dict with 'config' key containing the config text, or 'error' key.
+        """
+        import time
+
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_device_config_{device_id}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        # Submit command runner request
+        payload = {
+            "commands": ["show running-config"],
+            "deviceUuids": [device_id],
+        }
+        cmd_result = self._make_post_request(
+            "/dna/intent/api/v1/network-device-poller/cli/read-request", payload
+        )
+        if "error" in cmd_result:
+            return cmd_result
+
+        task_id = cmd_result.get("response", {}).get("taskId")
+        if not task_id:
+            return {"error": "No task ID returned from Command Runner"}
+
+        # Poll task for completion (max ~30 seconds)
+        import json as json_mod
+
+        file_id = None
+        for _ in range(15):
+            time.sleep(2)
+            task_result = self._make_request(f"/dna/intent/api/v1/task/{task_id}")
+            task_resp = task_result.get("response", {})
+
+            if task_resp.get("isError"):
+                return {"error": f"Command Runner error: {task_resp.get('failureReason', 'Unknown')}"}
+
+            if task_resp.get("endTime"):
+                progress = task_resp.get("progress", "")
+                try:
+                    prog_data = json_mod.loads(progress)
+                    file_id = prog_data.get("fileId")
+                except (json_mod.JSONDecodeError, TypeError):
+                    return {"error": f"Unexpected task progress: {progress}"}
+                break
+
+        if not file_id:
+            return {"error": "Command Runner task timed out"}
+
+        # Download result file
+        token = self._get_token()
+        if not token:
+            return {"error": "Failed to authenticate for file download"}
+
+        try:
+            url = f"{self.base_url}/dna/intent/api/v1/file/{file_id}"
+            response = requests.get(
+                url,
+                headers={"X-Auth-Token": token},
+                verify=self.verify_ssl,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            file_data = response.json()
+
+            if isinstance(file_data, list) and file_data:
+                cmd_responses = file_data[0].get("commandResponses", {})
+                success = cmd_responses.get("SUCCESS", {})
+                config_text = success.get("show running-config", "")
+                if config_text:
+                    result = {"config": config_text, "cached": False}
+                    cache.set(cache_key, result, cache_timeout)
+                    return result
+
+                failure = cmd_responses.get("FAILURE", {})
+                if failure:
+                    return {"error": f"Command failed: {list(failure.values())[0]}"}
+
+            return {"error": "No config data in Command Runner response"}
+        except requests.RequestException as e:
+            return {"error": f"Failed to download config: {e}"}
+
+    def get_device_names_with_configs(self):
+        """Get sorted list of reachable device hostnames for config operations.
+
+        Returns all reachable devices (Command Runner can fetch their configs).
+
+        Returns:
+            List of (hostname, device_id) tuples, sorted by hostname.
+        """
+        all_devices = self._get_all_devices()
+
+        result = []
+        for device in all_devices:
+            hostname = device.get("hostname", "")
+            device_id = device.get("id", "")
+            reachability = device.get("reachabilityStatus", "")
+            if hostname and device_id and reachability == "Reachable":
+                result.append((self._strip_domain(hostname), device_id))
+
+        return sorted(result, key=lambda x: x[0].lower())
+
 
 def get_client():
     """Get configured Catalyst Center client instance."""

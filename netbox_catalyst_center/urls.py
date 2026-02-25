@@ -9,6 +9,8 @@ from .views import (
     AddDeviceToInventoryView,
     AddDeviceToPnPView,
     CatalystCenterSettingsView,
+    ConfigAuditView,
+    ConfigDiffView,
     DeviceCatalystCenterContentView,
     ExportPnPCSVView,
     ImportDevicesView,
@@ -31,6 +33,8 @@ urlpatterns = [
     path("add-to-pnp/<int:pk>/", AddDeviceToPnPView.as_view(), name="add_to_pnp"),
     path("add-to-inventory/<int:pk>/", AddDeviceToInventoryView.as_view(), name="add_to_inventory"),
     path("export-pnp-csv/", ExportPnPCSVView.as_view(), name="export_pnp_csv"),
+    path("diff/", ConfigDiffView.as_view(), name="config_diff"),
+    path("audit/", ConfigAuditView.as_view(), name="config_audit"),
 ]
 
 # Add endpoint URLs if netbox_endpoints is installed

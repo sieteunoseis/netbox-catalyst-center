@@ -6,6 +6,8 @@ Also supports netbox-endpoints plugin for endpoint tabs (if installed).
 Provides settings configuration UI.
 """
 
+import difflib
+import logging
 import re
 
 from dcim.models import Device, InventoryItem, Manufacturer
@@ -32,6 +34,8 @@ from utilities.views import ViewTab, register_model_view
 
 from .catalyst_client import get_client
 from .forms import CatalystCenterSettingsForm
+
+logger = logging.getLogger(__name__)
 
 
 def is_valid_mac(value):
@@ -3331,3 +3335,166 @@ class InventoryComparisonView(View):
             comparison["error"] = f"Failed to fetch from Catalyst Center: {e}"
 
         return render(request, self.template_name, {"comparison": comparison})
+
+
+class ConfigDiffView(LoginRequiredMixin, PermissionRequiredMixin, View):
+    """Compare configurations of two Catalyst Center devices."""
+
+    permission_required = "dcim.view_device"
+    template_name = "netbox_catalyst_center/config_diff.html"
+
+    def get(self, request):
+        client = get_client()
+        device_list = []
+        error = None
+
+        if client:
+            try:
+                device_list = client.get_device_names_with_configs()
+            except Exception as e:
+                logger.error(f"Failed to fetch devices for diff: {e}")
+                error = str(e)
+        else:
+            error = "Catalyst Center not configured."
+
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
+
+        device_a_id = request.GET.get("device_a", "")
+        device_b_id = request.GET.get("device_b", "")
+        diff_html = ""
+        config_a = ""
+        config_b = ""
+        device_a_name = ""
+        device_b_name = ""
+
+        device_id_to_name = {did: name for name, did in device_list}
+
+        if device_a_id and device_b_id and client:
+            device_a_name = device_id_to_name.get(device_a_id, device_a_id)
+            device_b_name = device_id_to_name.get(device_b_id, device_b_id)
+            try:
+                config_a_data = client.get_device_config(device_a_id)
+                config_b_data = client.get_device_config(device_b_id)
+                config_a = config_a_data.get("config", "")
+                config_b = config_b_data.get("config", "")
+
+                if config_a and config_b:
+                    diff = difflib.unified_diff(
+                        config_a.splitlines(),
+                        config_b.splitlines(),
+                        fromfile=device_a_name,
+                        tofile=device_b_name,
+                        lineterm="",
+                    )
+                    diff_html = "\n".join(diff)
+                elif not config_a:
+                    error = f"Could not fetch config for {device_a_name}"
+                elif not config_b:
+                    error = f"Could not fetch config for {device_b_name}"
+            except Exception as e:
+                logger.error(f"Config diff error: {e}")
+                error = str(e)
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "device_list": device_list,
+                "device_a": device_a_id,
+                "device_b": device_b_id,
+                "device_a_name": device_a_name,
+                "device_b_name": device_b_name,
+                "diff_html": diff_html,
+                "config_a": config_a,
+                "config_b": config_b,
+                "error": error,
+                "catalyst_url": catalyst_url,
+            },
+        )
+
+
+class ConfigAuditView(LoginRequiredMixin, PermissionRequiredMixin, View):
+    """Run security audit on a Catalyst Center device configuration."""
+
+    permission_required = "dcim.view_device"
+    template_name = "netbox_catalyst_center/config_audit.html"
+
+    def get(self, request):
+        client = get_client()
+        device_list = []
+        error = None
+
+        if client:
+            try:
+                device_list = client.get_device_names_with_configs()
+            except Exception as e:
+                logger.error(f"Failed to fetch devices for audit: {e}")
+                error = str(e)
+        else:
+            error = "Catalyst Center not configured."
+
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        catalyst_url = config.get("catalyst_center_url", "").rstrip("/")
+
+        device_id = request.GET.get("device", "")
+        audit_html = ""
+        device_name = ""
+
+        device_id_to_name = {did: name for name, did in device_list}
+
+        if device_id and client:
+            device_name = device_id_to_name.get(device_id, device_id)
+            try:
+                config_data = client.get_device_config(device_id)
+                config_text = config_data.get("config", "")
+
+                if config_text:
+                    from rich.console import Console
+
+                    from ciscoconfaudit import CiscoConfAudit
+
+                    console = Console(record=True, width=160)
+                    audit = CiscoConfAudit()
+                    audit.console = console
+                    audit.global_config(config_text)
+                    audit.interface_config(config_text)
+                    for table in [audit.global_table, audit.interface_table]:
+                        if table and len(table.columns) > 1:
+                            table.columns[1].min_width = 30
+                    audit.get_report()
+                    audit_html = console.export_html(inline_styles=True)
+
+                    body_match = re.search(
+                        r"<body[^>]*>(.*?)</body>", audit_html, re.DOTALL
+                    )
+                    if body_match:
+                        audit_html = body_match.group(1).strip()
+                    audit_html = re.sub(
+                        r"<(?!/?(span|pre|code|br)\b)", "&lt;", audit_html
+                    )
+                    audit_html = audit_html.replace(
+                        "background-color: #ffffff", "background-color: transparent"
+                    ).replace("color: #000000", "color: inherit")
+                else:
+                    error = config_data.get(
+                        "error", f"No config available for {device_name}"
+                    )
+            except ImportError:
+                error = "ciscoconfaudit package not installed. Add ciscoconfaudit>=0.2.0 to requirements-extra.txt."
+            except Exception as e:
+                logger.error(f"Config audit error for {device_name}: {e}")
+                error = str(e)
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "device_list": device_list,
+                "device_id": device_id,
+                "device_name": device_name,
+                "audit_html": audit_html,
+                "error": error,
+                "catalyst_url": catalyst_url,
+            },
+        )

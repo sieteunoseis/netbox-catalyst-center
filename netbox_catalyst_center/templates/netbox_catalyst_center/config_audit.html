@@ -1,0 +1,94 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+
+{% block title %}Catalyst Center Config Audit{% endblock %}
+
+{% block header %}
+<h1 class="ps-3 pt-2"><i class="mdi mdi-shield-check"></i> Catalyst Center Config Audit</h1>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-shield-check"></i> Security Audit
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="get" class="row g-3 align-items-end">
+                    <div class="col-md-8">
+                        <label for="device" class="form-label">Device</label>
+                        <select class="form-select" id="device" name="device">
+                            <option value="">-- Select device --</option>
+                            {% for name, did in device_list %}
+                            <option value="{{ did }}" {% if did == device_id %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="mdi mdi-shield-search"></i> Run Audit
+                        </button>
+                        {% if device_name and catalyst_url and device_id %}
+                        <a href="{{ catalyst_url }}/dna/assurance/device/details?id={{ device_id }}" target="_blank" class="btn btn-outline-primary" title="Open in Catalyst Center">
+                            <i class="mdi mdi-open-in-new"></i>
+                        </a>
+                        {% endif %}
+                    </div>
+                </form>
+                <div class="mt-2 text-muted" style="font-size: 0.8rem;">
+                    Powered by <a href="https://pypi.org/project/ciscoconfaudit/" target="_blank">ciscoconfaudit</a> &mdash;
+                    checks based on the Cisco IOS XE Hardening Guide.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">
+    <i class="mdi mdi-alert-circle"></i> {{ error }}
+</div>
+{% endif %}
+
+{% if audit_html %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-clipboard-check"></i>
+                    Audit Results: <strong>{{ device_name }}</strong>
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="audit-results p-3" style="overflow: auto; max-height: 800px;">
+                    {{ audit_html|safe }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<style>
+    .audit-results pre {
+        margin: 0;
+        font-size: 0.8rem;
+        background: transparent !important;
+        color: var(--bs-body-color) !important;
+        white-space: pre;
+        overflow-x: auto;
+    }
+    .audit-results code {
+        background: transparent;
+    }
+    /* Dark mode: boost Rich colors for readability */
+    [data-bs-theme="dark"] .audit-results span[style*="color: #008000"] { color: #4ec94e !important; }
+    [data-bs-theme="dark"] .audit-results span[style*="color: #800000"] { color: #ff6b6b !important; }
+    [data-bs-theme="dark"] .audit-results span[style*="color: #808000"] { color: #e6e64d !important; }
+    [data-bs-theme="dark"] .audit-results span[style*="color: #000080"] { color: #6b9fff !important; }
+    [data-bs-theme="dark"] .audit-results span[style*="color: #800080"] { color: #d580ff !important; }
+</style>
+{% endif %}
+{% endblock %}
