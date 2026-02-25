@@ -3450,9 +3450,8 @@ class ConfigAuditView(LoginRequiredMixin, PermissionRequiredMixin, View):
                 config_text = config_data.get("config", "")
 
                 if config_text:
-                    from rich.console import Console
-
                     from ciscoconfaudit import CiscoConfAudit
+                    from rich.console import Console
 
                     console = Console(record=True, width=160)
                     audit = CiscoConfAudit()
