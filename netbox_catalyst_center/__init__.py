@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.4.2"
+__version__ = "1.4.3"
 
 logger = logging.getLogger(__name__)
 
@@ -116,10 +116,10 @@ class CatalystCenterConfig(PluginConfig):
     """Plugin configuration for NetBox Catalyst Center integration."""
 
     name = "netbox_catalyst_center"
-    verbose_name = "Catalyst Center"
+    verbose_name = "NetBox Catalyst Center"
     description = "Display Cisco Catalyst Center client details in device pages"
     version = __version__
-    author = "sieteunoseis"
+    author = "Jeremy Worden"
     author_email = "sieteunoseis@github.com"
     base_url = "catalyst-center"
     min_version = "4.0.0"
@@ -208,8 +208,8 @@ class CatalystCenterConfig(PluginConfig):
                 template_name = "netbox_catalyst_center/endpoint_tab.html"
 
                 tab = ViewTab(
-                    label="Catalyst Center",
-                    weight=9000,
+                    label="Cisco Catalyst Center",
+                    weight=9001,
                     permission="netbox_endpoints.view_endpoint",
                     hide_if_empty=False,
                     visible=should_show_catalyst_tab_endpoint,

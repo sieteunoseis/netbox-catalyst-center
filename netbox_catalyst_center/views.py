@@ -291,8 +291,8 @@ class DeviceCatalystCenterView(generic.ObjectView):
     template_name = "netbox_catalyst_center/device_tab.html"
 
     tab = ViewTab(
-        label="Catalyst Center",
-        weight=9000,
+        label="Cisco Catalyst Center",
+        weight=9001,
         permission="dcim.view_device",
         hide_if_empty=False,
         visible=should_show_catalyst_tab,
@@ -426,8 +426,8 @@ if ENDPOINTS_PLUGIN_INSTALLED:
         template_name = "netbox_catalyst_center/endpoint_tab.html"
 
         tab = ViewTab(
-            label="Catalyst Center",
-            weight=9000,
+            label="Cisco Catalyst Center",
+            weight=9001,
             permission="netbox_endpoints.view_endpoint",
             hide_if_empty=False,
             visible=should_show_catalyst_tab_endpoint,
