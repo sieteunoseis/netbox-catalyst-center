@@ -32,6 +32,8 @@ dependencies = [
 Homepage = "https://github.com/sieteunoseis/netbox-catalyst-center"
 Repository = "https://github.com/sieteunoseis/netbox-catalyst-center"
 Issues = "https://github.com/sieteunoseis/netbox-catalyst-center/issues"
+Documentation = "https://github.com/sieteunoseis/netbox-catalyst-center/wiki"
+Changelog = "https://github.com/sieteunoseis/netbox-catalyst-center/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
