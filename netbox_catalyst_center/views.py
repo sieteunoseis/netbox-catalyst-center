@@ -1084,18 +1084,17 @@ class SyncDeviceFromDNACView(View):
                     filtered_interfaces.append(iface)
             cc_interfaces = filtered_interfaces
 
-        # Get existing interfaces on device - build lookup with both original and normalized names
-        existing_interfaces = {}
-        for iface in device.interfaces.all():
-            existing_interfaces[iface.name] = iface
-            # Also map normalized name to interface for matching
-            normalized = self._normalize_interface_name(iface.name)
-            if normalized != iface.name:
-                existing_interfaces[normalized] = iface
+        # Get existing interfaces on device - build lookup with original, normalized, and VC-adjusted names
+        existing_interfaces = self._build_interface_lookup(device)
+
+        # Get rename setting for VC template interfaces
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        vc_rename = config.get("vc_rename_template_interfaces", True)
 
         created_count = 0
         updated_count = 0
         skipped_count = 0
+        renamed_count = 0
 
         # Track interfaces and their synced IPs for overwrite mode
         # Maps interface pk -> set of IP addresses (without prefix) synced from CC
@@ -1116,6 +1115,13 @@ class SyncDeviceFromDNACView(View):
 
             if nb_iface:
                 iface_updated = False
+
+                # If matched via VC-adjusted name, optionally rename to match CC
+                if nb_iface.name != iface_name and nb_iface.name != normalized_name:
+                    if vc_rename:
+                        nb_iface.name = iface_name
+                        iface_updated = True
+                        renamed_count += 1
 
                 # Update type if different
                 if nb_iface.type != netbox_type:
@@ -1284,6 +1290,8 @@ class SyncDeviceFromDNACView(View):
             summary_parts.append(f"{created_count} created")
         if updated_count:
             summary_parts.append(f"{updated_count} updated")
+        if renamed_count:
+            summary_parts.append(f"{renamed_count} renamed (VC template)")
         if skipped_count:
             summary_parts.append(f"{skipped_count} unchanged")
         if lag_count:
@@ -1363,12 +1371,22 @@ class SyncDeviceFromDNACView(View):
         equipment_result = client.get_device_equipment(device_id)
         transceivers = equipment_result.get("transceivers", {}) if "error" not in equipment_result else {}
 
+        # Get rename setting for VC template interfaces
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        vc_rename = config.get("vc_rename_template_interfaces", True)
+
         created_count = 0
         updated_count = 0
         skipped_count = 0
+        renamed_count = 0
 
         # Track interfaces per device for LAG membership
         device_interfaces = {dev.pk: {} for dev in member_devices.values()}
+
+        # Pre-build interface lookups per device (avoids rebuilding per CC interface)
+        device_lookups = {}
+        for dev in member_devices.values():
+            device_lookups[dev.pk] = self._build_interface_lookup(dev)
 
         for cc_iface in cc_interfaces:
             iface_name = cc_iface.get("name")
@@ -1390,21 +1408,12 @@ class SyncDeviceFromDNACView(View):
                 )
                 target_device = master_device
 
-            # Log all member 2 interfaces to debug the distribution issue
-            if member_num == 2:
-                logger.warning(f"VC Sync MEMBER2 - {iface_name}: target={target_device.name} (pk={target_device.pk})")
-
             # Map CC interface type to NetBox type, using transceiver data if available
             transceiver = transceivers.get(iface_name)
             netbox_type = self._map_interface_type(cc_iface, transceiver=transceiver)
 
-            # Get existing interfaces on target device - build lookup with both original and normalized names
-            existing_interfaces = {}
-            for iface in target_device.interfaces.all():
-                existing_interfaces[iface.name] = iface
-                normalized = self._normalize_interface_name(iface.name)
-                if normalized != iface.name:
-                    existing_interfaces[normalized] = iface
+            # Get pre-built lookup for target device
+            existing_interfaces = device_lookups.get(target_device.pk, {})
 
             # Check if interface exists - try both original and normalized name
             normalized_name = self._normalize_interface_name(iface_name)
@@ -1412,6 +1421,13 @@ class SyncDeviceFromDNACView(View):
 
             if nb_iface:
                 iface_updated = False
+
+                # If matched via VC-adjusted name, optionally rename to match CC
+                if nb_iface.name != iface_name and nb_iface.name != normalized_name:
+                    if vc_rename:
+                        nb_iface.name = iface_name
+                        iface_updated = True
+                        renamed_count += 1
 
                 # Update type if different
                 if nb_iface.type != netbox_type:
@@ -1560,6 +1576,8 @@ class SyncDeviceFromDNACView(View):
             summary_parts.append(f"{created_count} created")
         if updated_count:
             summary_parts.append(f"{updated_count} updated")
+        if renamed_count:
+            summary_parts.append(f"{renamed_count} renamed (VC template)")
         if skipped_count:
             summary_parts.append(f"{skipped_count} unchanged")
         if lag_count:
@@ -1604,6 +1622,52 @@ class SyncDeviceFromDNACView(View):
         self._create_interface_journal(master_device, cc_interfaces, created_count, updated_count)
 
         return {"changes": changes}
+
+    def _create_templates_from_device(self, device_type, device):
+        """
+        Create InterfaceTemplates on a device type from a device's synced interfaces.
+
+        Copies physical interfaces from the device to the device type as templates.
+        Skips logical interfaces (VLANs, Loopbacks, Port-channels, etc.) since those
+        vary per deployment and shouldn't be in templates.
+
+        Only call this for newly created device types — existing types are never modified.
+        """
+        from dcim.models import InterfaceTemplate
+
+        template_count = 0
+        for iface in device.interfaces.all():
+            # Skip logical interfaces - only template physical ones
+            iface_lower = iface.name.lower()
+            logical_prefixes = (
+                "vlan",
+                "loopback",
+                "tunnel",
+                "port-channel",
+                "po",
+                "nve",
+                "bdi",
+                "null",
+                "management",
+                "mgmt",
+            )
+            if any(iface_lower.startswith(prefix) for prefix in logical_prefixes):
+                continue
+
+            # Skip subinterfaces (e.g., GigabitEthernet1/0/1.100)
+            if "." in iface.name:
+                continue
+
+            # Create template if it doesn't already exist
+            _, created = InterfaceTemplate.objects.get_or_create(
+                device_type=device_type,
+                name=iface.name,
+                defaults={"type": iface.type},
+            )
+            if created:
+                template_count += 1
+
+        return template_count
 
     def _create_interface_journal(self, device, cc_interfaces, created_count, updated_count):
         """Create a journal entry on the device with CC interface sync data."""
@@ -1840,18 +1904,38 @@ class SyncDeviceFromDNACView(View):
         Cisco devices may report abbreviated interface names (Lo0, Gi1/0/1)
         while NetBox may have full names (Loopback0, GigabitEthernet1/0/1).
         This normalizes to the full form for consistent matching.
+
+        User-configured mappings from `interface_name_map` are checked first,
+        then built-in abbreviation patterns are applied.
         """
         if not name:
             return name
 
         import re
 
-        # Map of abbreviated prefixes to full names
+        # Check user-configured interface name mappings first
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        user_map = config.get("interface_name_map", {})
+        if user_map:
+            # Sort by key length descending so longer prefixes match first
+            for prefix, full_name in sorted(user_map.items(), key=lambda x: len(x[0]), reverse=True):
+                pattern = rf"^{re.escape(prefix)}(\d)"
+                if re.match(pattern, name, re.IGNORECASE):
+                    return re.sub(pattern, rf"{full_name}\1", name, flags=re.IGNORECASE)
+
+        # Built-in map of abbreviated prefixes to full names
         # Order matters - check longer prefixes first
         prefix_map = [
-            (r"^Tw(\d)", r"TwentyFiveGigE\1"),
+            (r"^TwentyFiveGigE(\d)", r"TwentyFiveGigabitEthernet\1"),
+            (r"^HundredGigE(\d)", r"HundredGigabitEthernet\1"),
+            (r"^FortyGigE(\d)", r"FortyGigabitEthernet\1"),
+            (r"^Twe(\d)", r"TwentyFiveGigabitEthernet\1"),
+            (r"^Hu(\d)", r"HundredGigabitEthernet\1"),
+            (r"^Fo(\d)", r"FortyGigabitEthernet\1"),
+            (r"^Tw(\d)", r"TwoGigabitEthernet\1"),
             (r"^Te(\d)", r"TenGigabitEthernet\1"),
             (r"^Gi(\d)", r"GigabitEthernet\1"),
+            (r"^GE(\d)", r"GigabitEthernet\1"),
             (r"^Fa(\d)", r"FastEthernet\1"),
             (r"^Eth(\d)", r"Ethernet\1"),
             (r"^Lo(\d)", r"Loopback\1"),
@@ -1860,6 +1944,7 @@ class SyncDeviceFromDNACView(View):
             (r"^Tu(\d)", r"Tunnel\1"),
             (r"^Nv(\d)", r"nve\1"),
             (r"^mgmt(\d)", r"mgmt\1"),
+            (r"^e(\d)", r"Ethernet\1"),
         ]
 
         for pattern, replacement in prefix_map:
@@ -1867,6 +1952,59 @@ class SyncDeviceFromDNACView(View):
                 return re.sub(pattern, replacement, name, flags=re.IGNORECASE)
 
         return name
+
+    def _adjust_interface_member_number(self, name, vc_position):
+        """
+        Adjust interface name member/slot number to match VC position.
+
+        Device type templates use fixed numbering (e.g., GigabitEthernet1/0/1)
+        but CC returns member-specific names (e.g., GigabitEthernet2/0/1 for member 2).
+
+        This returns the adjusted name if the member number differs from vc_position,
+        or None if the name doesn't match the pattern or already has the right number.
+        """
+        if not name:
+            return None
+        match = re.match(r"^([A-Za-z-]+)(\d+)(/.+)$", name)
+        if match:
+            prefix, current_member, suffix = match.groups()
+            if int(current_member) != vc_position:
+                return f"{prefix}{vc_position}{suffix}"
+        return None
+
+    def _build_interface_lookup(self, device):
+        """
+        Build interface name lookup dict with all name variants for matching.
+
+        Returns a dict mapping interface name variants to Interface objects.
+        Includes: original name, normalized name, and VC-adjusted name (for VC members
+        with device types that have interface templates).
+        """
+        lookup = {}
+        for iface in device.interfaces.all():
+            # Original name
+            lookup[iface.name] = iface
+            # Normalized name (abbreviated -> full)
+            normalized = self._normalize_interface_name(iface.name)
+            if normalized != iface.name:
+                lookup[normalized] = iface
+
+        # For VC members with template-created interfaces, also map adjusted names
+        if device.virtual_chassis and device.vc_position:
+            has_templates = device.device_type.interfacetemplates.exists()
+            if has_templates:
+                for iface in device.interfaces.all():
+                    adjusted = self._adjust_interface_member_number(iface.name, device.vc_position)
+                    if adjusted:
+                        lookup[adjusted] = iface
+                    # Also try normalized + adjusted
+                    normalized = self._normalize_interface_name(iface.name)
+                    if normalized != iface.name:
+                        adj_norm = self._adjust_interface_member_number(normalized, device.vc_position)
+                        if adj_norm:
+                            lookup[adj_norm] = iface
+
+        return lookup
 
     def _normalize_mac(self, mac_address):
         """Normalize MAC address to NetBox format (AA:BB:CC:DD:EE:FF)."""
@@ -2623,6 +2761,7 @@ def _import_as_virtual_chassis(
 
     created_members = []
     master_device = None
+    newly_created_device_types = set()  # Track PKs of newly created device types
 
     try:
         with transaction.atomic():
@@ -2642,13 +2781,15 @@ def _import_as_virtual_chassis(
                 # Fall back to the passed device_type if platform_list doesn't have enough entries
                 if platform_list and member_num <= len(platform_list):
                     member_platform = platform_list[member_num - 1]
-                    member_device_type, _ = DeviceType.objects.get_or_create(
+                    member_device_type, dt_created = DeviceType.objects.get_or_create(
                         manufacturer=cisco_manufacturer,
                         model=member_platform,
                         defaults={
                             "slug": member_platform.lower().replace(" ", "-").replace("/", "-"),
                         },
                     )
+                    if dt_created:
+                        newly_created_device_types.add(member_device_type.pk)
                 else:
                     member_device_type = device_type
 
@@ -2785,6 +2926,21 @@ def _import_as_virtual_chassis(
                                                 pass
                         except Exception:
                             pass
+
+                    # Auto-create interface templates on newly created device types
+                    # Use member 1's interfaces (they have 1/0/x naming which is correct for templates)
+                    if newly_created_device_types and 1 in member_devices:
+                        vc_config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+                        if vc_config.get("create_interface_templates", False):
+                            member_1 = member_devices[1]
+                            for dt_pk in newly_created_device_types:
+                                try:
+                                    dt = DeviceType.objects.get(pk=dt_pk)
+                                    tmpl_count = sync_view._create_templates_from_device(dt, member_1)
+                                    if tmpl_count:
+                                        logger.info(f"Created {tmpl_count} interface templates on {dt.model}")
+                                except Exception as tmpl_err:
+                                    logger.warning(f"Failed to create interface templates: {tmpl_err}")
 
                 except Exception as e:
                     import logging
@@ -2947,8 +3103,9 @@ class ImportDevicesView(View):
                 continue
 
             # Get or create device type based on platform
+            device_type_created = False
             if platform:
-                device_type, _ = DeviceType.objects.get_or_create(
+                device_type, device_type_created = DeviceType.objects.get_or_create(
                     manufacturer=cisco_manufacturer,
                     model=platform,
                     defaults={
@@ -2957,7 +3114,7 @@ class ImportDevicesView(View):
                 )
             else:
                 # Use generic type if platform unknown
-                device_type, _ = DeviceType.objects.get_or_create(
+                device_type, device_type_created = DeviceType.objects.get_or_create(
                     manufacturer=cisco_manufacturer,
                     model="Unknown",
                     defaults={"slug": "cisco-unknown"},
@@ -3170,6 +3327,27 @@ class ImportDevicesView(View):
                                     logging.getLogger(__name__).warning(
                                         f"Failed to sync POE for {hostname_base}: {poe_err}"
                                     )
+
+                                # Auto-create interface templates on newly created device types
+                                if device_type_created:
+                                    import_config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+                                    if import_config.get("create_interface_templates", False):
+                                        try:
+                                            tmpl_count = sync_view._create_templates_from_device(
+                                                device_type, new_device
+                                            )
+                                            if tmpl_count:
+                                                import logging
+
+                                                logging.getLogger(__name__).info(
+                                                    f"Created {tmpl_count} interface templates on {device_type.model}"
+                                                )
+                                        except Exception as tmpl_err:
+                                            import logging
+
+                                            logging.getLogger(__name__).warning(
+                                                f"Failed to create interface templates for {device_type.model}: {tmpl_err}"
+                                            )
                             except Exception as iface_err:
                                 # Log but don't fail the import
                                 import logging

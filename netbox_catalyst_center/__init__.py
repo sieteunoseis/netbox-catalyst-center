@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,21 @@ class CatalystCenterConfig(PluginConfig):
         # - Logical interfaces (VLANs, Loopbacks, Port-channels) assigned to master
         # When disabled (default), stacks are imported as single devices
         "enable_virtual_chassis": False,
+        # VC template interface naming: controls how template interfaces are handled on VC members
+        # Device type templates use fixed numbering (e.g., GigabitEthernet1/0/1) but CC returns
+        # member-specific names (e.g., GigabitEthernet2/0/1 for member 2).
+        # When True (default): template interfaces renamed to match CC naming (1/0/x -> 2/0/x)
+        # When False: template interfaces keep original names, properties still updated from CC
+        "vc_rename_template_interfaces": True,
+        # Auto-create interface templates when a new device type is created during import
+        # Templates are populated from synced CC interface data (member 1 for stacks)
+        # Only applies to newly created device types - existing types are never modified
+        "create_interface_templates": False,
+        # Custom interface name normalization mappings (prefix -> full name)
+        # Used to match abbreviated template names to full CC interface names
+        # These are checked BEFORE built-in mappings, so they can override defaults
+        # Example: {"GE": "GigabitEthernet", "fc": "FibreChannel", "GigibitEthernet": "GigabitEthernet"}
+        "interface_name_map": {},
         # Device types to show tab for and lookup method
         # Format: list of dicts with manufacturer (regex), device_type (regex, optional), lookup method
         # lookup: "hostname" = network device lookup, "mac" = wireless client lookup

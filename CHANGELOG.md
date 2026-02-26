@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-02-26
+
+### Added
+
+- **VC Template Interface Matching** (Closes #13)
+  - Prevents duplicate interfaces on Virtual Chassis members when device types have interface templates
+  - Device type templates use fixed numbering (e.g., `GigabitEthernet1/0/1`) but Catalyst Center returns member-specific names (e.g., `GigabitEthernet2/0/1` for member 2) — the sync now matches these correctly
+  - New `vc_rename_template_interfaces` setting (default: `True`): when True, renames template interfaces to match CC naming; when False, keeps template names but still updates properties from CC
+  - New `create_interface_templates` setting (default: `False`): auto-creates InterfaceTemplates on newly created device types from synced CC interface data
+
+- **Configurable Interface Name Mapping** (`interface_name_map` setting)
+  - User-defined prefix-to-full-name mappings for interface name normalization
+  - Checked before built-in mappings, allowing overrides for custom abbreviations or typos in templates
+  - Example: `{"GE": "GigabitEthernet", "fc": "FibreChannel", "GigibitEthernet": "GigabitEthernet"}`
+
+- **Expanded Built-in Interface Name Normalization**
+  - Added: `HundredGigE` → `HundredGigabitEthernet`, `TwentyFiveGigE` → `TwentyFiveGigabitEthernet`, `FortyGigE` → `FortyGigabitEthernet`
+  - Added: `Hu` → `HundredGigabitEthernet`, `Twe` → `TwentyFiveGigabitEthernet`, `Fo` → `FortyGigabitEthernet`, `Tw` → `TwoGigabitEthernet`
+  - Added: `GE` → `GigabitEthernet`, `e` → `Ethernet`
+
+### Changed
+
+- **Optimized VC Interface Sync** — interface lookups are now built once per device instead of per-interface, reducing database queries during virtual chassis imports
+- `Tw` prefix now maps to `TwoGigabitEthernet` (was `TwentyFiveGigE`); use `Twe` for TwentyFiveGigabitEthernet
+
 ## [1.3.5] - 2026-01-30
 
 ### Added
