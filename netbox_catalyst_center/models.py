@@ -7,6 +7,4 @@ class CatalystCenter(models.Model):
     class Meta:
         managed = False
         default_permissions = ()
-        permissions = (
-            ("configure_catalystcenter", "Can configure Catalyst Center plugin settings"),
-        )
+        permissions = (("configure_catalystcenter", "Can configure Catalyst Center plugin settings"),)
