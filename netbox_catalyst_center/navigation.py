@@ -43,7 +43,7 @@ menu = PluginMenu(
                 PluginMenuItem(
                     link="plugins:netbox_catalyst_center:settings",
                     link_text="Configuration",
-                    permissions=["dcim.view_device"],
+                    permissions=["netbox_catalyst_center.configure_catalystcenter"],
                 ),
             ),
         ),

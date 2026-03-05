@@ -562,9 +562,10 @@ if ENDPOINTS_PLUGIN_INSTALLED:
             )
 
 
-class CatalystCenterSettingsView(View):
+class CatalystCenterSettingsView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """View for configuring Catalyst Center plugin settings."""
 
+    permission_required = "netbox_catalyst_center.configure_catalystcenter"
     template_name = "netbox_catalyst_center/settings.html"
 
     def get_current_config(self):
