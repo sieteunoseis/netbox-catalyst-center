@@ -59,6 +59,11 @@ A NetBox plugin that integrates Cisco Catalyst Center (formerly DNA Center) with
 ### Settings Page
 ![Settings](https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/screenshots/netbox-catalyst-center-settings.png)
 
+### Dashboard Widget
+Catalyst Center health widget showing device reachability and compliance summary.
+
+![Dashboard Widget](https://raw.githubusercontent.com/sieteunoseis/netbox-catalyst-center/main/screenshots/netbox-catalyst-center-widget.png)
+
 ## Requirements
 
 - NetBox 4.0 or higher (tested on NetBox 4.x only)

@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,7 @@ class CatalystCenterConfig(PluginConfig):
         """Register signal to create custom fields after migrations."""
         super().ready()
         post_migrate.connect(create_custom_fields, sender=self)
+        from . import widgets  # noqa: F401
 
         # Register endpoint view if netbox_endpoints is available
         self._register_endpoint_views()

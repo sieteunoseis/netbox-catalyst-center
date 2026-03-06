@@ -1,0 +1,80 @@
+{% load i18n %}
+
+{% if error %}
+  <div class="text-center py-2">
+    <span class="text-danger">
+      <i class="mdi mdi-alert"></i> {{ error }}
+    </span>
+  </div>
+{% elif reachability %}
+  <div class="mb-2">
+    <div class="small fw-bold text-muted mb-1">{% trans "Reachability" %}</div>
+    <div class="d-flex flex-wrap justify-content-center gap-3">
+      {% if reachability.reachable %}
+      <div class="text-center">
+        <span class="badge bg-success text-white fs-5 px-3 py-2">{{ reachability.reachable }}</span>
+        <div class="mt-1 small fw-bold text-muted">{% trans "Reachable" %}</div>
+      </div>
+      {% endif %}
+      {% if reachability.ping_reachable %}
+      <div class="text-center">
+        <span class="badge bg-warning text-dark fs-5 px-3 py-2">{{ reachability.ping_reachable }}</span>
+        <div class="mt-1 small fw-bold text-muted">{% trans "Ping Only" %}</div>
+      </div>
+      {% endif %}
+      {% if reachability.unreachable %}
+      <div class="text-center">
+        <span class="badge bg-danger text-white fs-5 px-3 py-2">{{ reachability.unreachable }}</span>
+        <div class="mt-1 small fw-bold text-muted">{% trans "Unreachable" %}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="mb-2">
+    <div class="small fw-bold text-muted mb-1">{% trans "Compliance" %}</div>
+    <div class="d-flex flex-wrap justify-content-center gap-3">
+      {% if compliance.compliant %}
+      <div class="text-center">
+        <span class="badge bg-success text-white fs-5 px-3 py-2">{{ compliance.compliant }}</span>
+        <div class="mt-1 small fw-bold text-muted">{% trans "Compliant" %}</div>
+      </div>
+      {% endif %}
+      {% if compliance.non_compliant %}
+      <div class="text-center">
+        <span class="badge bg-danger text-white fs-5 px-3 py-2">{{ compliance.non_compliant }}</span>
+        <div class="mt-1 small fw-bold text-muted">{% trans "Non-Compliant" %}</div>
+      </div>
+      {% endif %}
+      {% if compliance.error %}
+      <div class="text-center">
+        <span class="badge bg-warning text-dark fs-5 px-3 py-2">{{ compliance.error }}</span>
+        <div class="mt-1 small fw-bold text-muted">{% trans "Error" %}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="text-center border-top pt-2 mt-2">
+    <span class="text-muted small">{% trans "Total Devices" %}: </span>
+    <span class="fw-bold">{{ total }}</span>
+  </div>
+
+  <div class="d-flex justify-content-between align-items-center mt-2 px-1">
+    {% if cached %}
+      <small class="text-muted"><i class="mdi mdi-cached"></i> {% trans "Cached" %}</small>
+    {% else %}
+      <small class="text-muted"><i class="mdi mdi-check-circle"></i> {% trans "Live" %}</small>
+    {% endif %}
+    {% if cc_url %}
+      <a href="{{ cc_url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+        <i class="mdi mdi-open-in-new"></i> {% trans "Catalyst Center" %}
+      </a>
+    {% endif %}
+  </div>
+{% else %}
+  <p class="text-center text-muted py-2">
+    <i class="mdi mdi-information-outline"></i>
+    {% trans "No device data available." %}
+  </p>
+{% endif %}

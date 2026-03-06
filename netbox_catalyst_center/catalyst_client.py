@@ -1518,6 +1518,55 @@ class CatalystCenterClient:
 
         return sorted(result, key=lambda x: x[0].lower())
 
+    def get_device_health_summary(self, cache_timeout=300):
+        """Get aggregate device reachability and compliance summary.
+
+        Returns:
+            dict with {reachability, compliance, total, cached} or {error}
+        """
+        cache_key = "catalyst_device_health_summary"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            cached["cached"] = True
+            return cached
+
+        devices = self._get_all_devices()
+        if not devices:
+            return {"error": "No devices returned from Catalyst Center"}
+
+        reachability = {"reachable": 0, "ping_reachable": 0, "unreachable": 0}
+        for device in devices:
+            status = (device.get("reachabilityStatus") or "").lower()
+            if status == "reachable":
+                reachability["reachable"] += 1
+            elif status == "ping reachable":
+                reachability["ping_reachable"] += 1
+            else:
+                reachability["unreachable"] += 1
+
+        # Get bulk compliance status
+        compliance = {"compliant": 0, "non_compliant": 0, "error": 0}
+        compliance_endpoint = "/dna/intent/api/v1/compliance"
+        comp_result = self._make_request(compliance_endpoint, {"limit": 500})
+        if "error" not in comp_result:
+            for record in comp_result.get("response", []):
+                status = (record.get("complianceStatus") or "").upper()
+                if status == "COMPLIANT":
+                    compliance["compliant"] += 1
+                elif status == "NON_COMPLIANT":
+                    compliance["non_compliant"] += 1
+                else:
+                    compliance["error"] += 1
+
+        summary = {
+            "reachability": reachability,
+            "compliance": compliance,
+            "total": len(devices),
+            "cached": False,
+        }
+        cache.set(cache_key, summary, cache_timeout)
+        return summary
+
 
 def get_client():
     """Get configured Catalyst Center client instance."""
