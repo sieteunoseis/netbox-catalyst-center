@@ -35,6 +35,11 @@ menu = PluginMenu(
                     link_text="Config Audit",
                     permissions=["dcim.view_device"],
                 ),
+                PluginMenuItem(
+                    link="plugins:netbox_catalyst_center:neighbor_discovery",
+                    link_text="Neighbor Discovery",
+                    permissions=["dcim.view_device"],
+                ),
             ),
         ),
         (

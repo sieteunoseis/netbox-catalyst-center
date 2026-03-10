@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-03-09
+
+### Added
+
+- **CDP/LLDP Neighbor Discovery** (Closes #15)
+  - New page under **Catalyst Center > Configs > Neighbor Discovery**
+  - Runs `show cdp neighbors detail` and/or `show lldp neighbors detail` via Command Runner API
+  - Parses output and cross-references with NetBox devices and interfaces
+  - Displays table with local interface, neighbor device, remote interface, platform, and cable status
+  - Color-coded status badges: Connected (green), No Cable (yellow), Mismatch (red), Unknown (gray)
+  - Links to NetBox device and interface pages when matches are found
+  - **Bulk cable creation**: select discovered connections and create cables directly in NetBox
+  - Protocol selection: CDP, LLDP, or both
+  - Uses same Command Runner async pattern as Config Diff and Config Audit
+
+- **Generic CLI Command Runner** (`run_cli_command` client method)
+  - Reusable method for executing arbitrary CLI commands via Catalyst Center Command Runner API
+  - Supports caching to reduce API calls for repeated commands
+
 ## [1.5.1] - 2026-02-26
 
 ### Added

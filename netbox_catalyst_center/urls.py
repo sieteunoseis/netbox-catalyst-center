@@ -8,14 +8,17 @@ from .views import (
     ENDPOINTS_PLUGIN_INSTALLED,
     AddDeviceToInventoryView,
     AddDeviceToPnPView,
+    AssignPrimaryIPView,
     CatalystCenterSettingsView,
     ConfigAuditView,
     ConfigDiffView,
+    CreateCablesView,
     DeviceCatalystCenterContentView,
     ExportPnPCSVView,
     ImportDevicesView,
     ImportPageView,
     InventoryComparisonView,
+    NeighborDiscoveryView,
     SearchDevicesView,
     SyncDeviceFromDNACView,
     TestConnectionView,
@@ -35,6 +38,9 @@ urlpatterns = [
     path("export-pnp-csv/", ExportPnPCSVView.as_view(), name="export_pnp_csv"),
     path("diff/", ConfigDiffView.as_view(), name="config_diff"),
     path("audit/", ConfigAuditView.as_view(), name="config_audit"),
+    path("neighbors/", NeighborDiscoveryView.as_view(), name="neighbor_discovery"),
+    path("create-cables/", CreateCablesView.as_view(), name="create_cables"),
+    path("assign-ip/<int:pk>/", AssignPrimaryIPView.as_view(), name="assign_primary_ip"),
 ]
 
 # Add endpoint URLs if netbox_endpoints is installed

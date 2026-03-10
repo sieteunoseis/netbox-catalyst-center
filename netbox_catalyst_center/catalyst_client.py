@@ -1498,6 +1498,96 @@ class CatalystCenterClient:
         except requests.RequestException as e:
             return {"error": f"Failed to download config: {e}"}
 
+    def run_cli_command(self, device_id, command, cache_timeout=None):
+        """Run an arbitrary CLI command on a device via Command Runner API.
+
+        Args:
+            device_id: Catalyst Center device UUID.
+            command: CLI command to execute (e.g., "show cdp neighbors detail").
+            cache_timeout: Optional cache timeout in seconds. If None, uses plugin config.
+
+        Returns:
+            dict with 'output' key containing the command output, or 'error' key.
+        """
+        import time
+
+        config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        if cache_timeout is None:
+            cache_timeout = config.get("cache_timeout", 60)
+        cache_key = f"catalyst_cli_{device_id}_{command.replace(' ', '_')}"
+
+        cached = cache.get(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
+        payload = {
+            "commands": [command],
+            "deviceUuids": [device_id],
+        }
+        cmd_result = self._make_post_request("/dna/intent/api/v1/network-device-poller/cli/read-request", payload)
+        if "error" in cmd_result:
+            return cmd_result
+
+        task_id = cmd_result.get("response", {}).get("taskId")
+        if not task_id:
+            return {"error": "No task ID returned from Command Runner"}
+
+        import json as json_mod
+
+        file_id = None
+        for _ in range(15):
+            time.sleep(2)
+            task_result = self._make_request(f"/dna/intent/api/v1/task/{task_id}")
+            task_resp = task_result.get("response", {})
+
+            if task_resp.get("isError"):
+                return {"error": f"Command Runner error: {task_resp.get('failureReason', 'Unknown')}"}
+
+            if task_resp.get("endTime"):
+                progress = task_resp.get("progress", "")
+                try:
+                    prog_data = json_mod.loads(progress)
+                    file_id = prog_data.get("fileId")
+                except (json_mod.JSONDecodeError, TypeError):
+                    return {"error": f"Unexpected task progress: {progress}"}
+                break
+
+        if not file_id:
+            return {"error": "Command Runner task timed out"}
+
+        token = self._get_token()
+        if not token:
+            return {"error": "Failed to authenticate for file download"}
+
+        try:
+            url = f"{self.base_url}/dna/intent/api/v1/file/{file_id}"
+            response = requests.get(
+                url,
+                headers={"X-Auth-Token": token},
+                verify=self.verify_ssl,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            file_data = response.json()
+
+            if isinstance(file_data, list) and file_data:
+                cmd_responses = file_data[0].get("commandResponses", {})
+                success = cmd_responses.get("SUCCESS", {})
+                output_text = success.get(command, "")
+                if output_text:
+                    result = {"output": output_text, "cached": False}
+                    cache.set(cache_key, result, cache_timeout)
+                    return result
+
+                failure = cmd_responses.get("FAILURE", {})
+                if failure:
+                    return {"error": f"Command failed: {list(failure.values())[0]}"}
+
+            return {"error": "No output data in Command Runner response"}
+        except requests.RequestException as e:
+            return {"error": f"Failed to download command output: {e}"}
+
     def get_device_names_with_configs(self):
         """Get sorted list of reachable device hostnames for config operations.
 

@@ -2506,6 +2506,115 @@ class AddDeviceToInventoryView(View):
         )
 
 
+class AssignPrimaryIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
+    """Resolve device hostname via DNS and assign as primary IP."""
+
+    permission_required = ("dcim.change_device", "ipam.add_ipaddress")
+
+    def post(self, request, pk):
+        import socket
+
+        from ipam.models import IPAddress, Prefix
+
+        try:
+            device = Device.objects.select_related("primary_ip4", "primary_ip6").get(pk=pk)
+        except Device.DoesNotExist:
+            return JsonResponse({"success": False, "error": "Device not found"}, status=404)
+
+        if device.primary_ip4 or device.primary_ip6:
+            return JsonResponse({"success": False, "error": "Device already has a primary IP"}, status=400)
+
+        # Use provided IP or fall back to DNS lookup
+        ip_str = request.POST.get("ip_address", "").strip()
+        if not ip_str:
+            hostname = device.name
+            if hostname and "." not in hostname:
+                # Try FQDN with common domain
+                try:
+                    socket.getaddrinfo(hostname, None)
+                except socket.gaierror:
+                    pass
+            try:
+                result = socket.getaddrinfo(hostname, None, socket.AF_INET)
+                if result:
+                    ip_str = result[0][4][0]
+            except socket.gaierror:
+                return JsonResponse(
+                    {"success": False, "error": f"DNS lookup failed for '{hostname}'"},
+                    status=400,
+                )
+
+        if not ip_str:
+            return JsonResponse({"success": False, "error": "Could not resolve hostname"}, status=400)
+
+        # Find matching prefix in NetBox to determine the correct mask
+        import netaddr
+
+        ip_obj = netaddr.IPAddress(ip_str)
+        matching_prefixes = Prefix.objects.filter(
+            prefix__net_contains=str(ip_obj)
+        ).order_by("-prefix__prefixlen")
+
+        if matching_prefixes.exists():
+            best_prefix = matching_prefixes.first()
+            prefix_length = best_prefix.prefix.prefixlen
+            vrf = best_prefix.vrf
+        else:
+            # No matching prefix — default to /32
+            prefix_length = 32
+            vrf = None
+
+        ip_with_mask = f"{ip_str}/{prefix_length}"
+
+        # Check if IP already exists in NetBox
+        existing_ip = IPAddress.objects.filter(address=ip_with_mask, vrf=vrf).first()
+        if existing_ip:
+            ip_record = existing_ip
+        else:
+            ip_record = IPAddress(address=ip_with_mask, vrf=vrf, dns_name=device.name)
+            ip_record.save()
+
+        # Find or create a management interface to assign the IP to
+        mgmt_intf = None
+        # Try common management interface names
+        for name in ["Loopback0", "mgmt0", "Management0", "Management1", "Vlan1"]:
+            mgmt_intf = device.interfaces.filter(name=name).first()
+            if mgmt_intf:
+                break
+
+        if not mgmt_intf:
+            # Use the first interface available
+            mgmt_intf = device.interfaces.first()
+
+        if not mgmt_intf:
+            # Create a Loopback0 interface
+            from dcim.models import Interface
+
+            mgmt_intf = Interface(device=device, name="Loopback0", type="virtual")
+            mgmt_intf.save()
+
+        # Assign IP to interface if not already assigned
+        if not ip_record.assigned_object or ip_record.assigned_object != mgmt_intf:
+            ip_record.assigned_object = mgmt_intf
+            ip_record.save()
+
+        # Set as primary IP
+        device.primary_ip4 = ip_record
+        device.save()
+
+        prefix_info = f" (from prefix {best_prefix.prefix})" if matching_prefixes.exists() else " (/32 — no matching prefix found)"
+        intf_name = mgmt_intf.name
+
+        return JsonResponse(
+            {
+                "success": True,
+                "message": f"Assigned {ip_with_mask} to {intf_name}{prefix_info}",
+                "ip_address": ip_with_mask,
+                "interface": intf_name,
+            }
+        )
+
+
 class ExportPnPCSVView(View):
     """Export a PnP CSV file for NetBox devices not in Catalyst Center."""
 
@@ -3666,3 +3775,334 @@ class ConfigAuditView(LoginRequiredMixin, PermissionRequiredMixin, View):
                 "catalyst_url": catalyst_url,
             },
         )
+
+
+class NeighborDiscoveryView(LoginRequiredMixin, PermissionRequiredMixin, View):
+    """Discover CDP/LLDP neighbors via Catalyst Center Command Runner."""
+
+    permission_required = "dcim.view_device"
+    template_name = "netbox_catalyst_center/neighbor_discovery.html"
+
+    def get(self, request):
+        from dcim.models import Interface as DcimInterface
+        from dcim.models import VirtualChassis
+
+        from .neighbors import (
+            get_interface_name_variants,
+            normalize_interface_name,
+            parse_cdp_neighbors,
+            parse_lldp_neighbors,
+        )
+
+        client = get_client()
+        device_list = []
+        error = None
+
+        if client:
+            try:
+                device_list = client.get_device_names_with_configs()
+            except Exception as e:
+                logger.error(f"Failed to fetch devices for neighbor discovery: {e}")
+                error = str(e)
+        else:
+            error = "Catalyst Center not configured."
+
+        plugin_config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
+        catalyst_url = plugin_config.get("catalyst_center_url", "").rstrip("/")
+        strip_domain = plugin_config.get("strip_domain", True)
+
+        device_id = request.GET.get("device", "")
+        protocol = request.GET.get("protocol", "cdp")
+        device_name = ""
+        neighbors = []
+
+        device_id_to_name = {did: name for name, did in device_list}
+
+        if device_id and client:
+            device_name = device_id_to_name.get(device_id, device_id)
+
+            try:
+                all_neighbors = []
+
+                if protocol in ("cdp", "both"):
+                    cdp_result = client.run_cli_command(device_id, "show cdp neighbors detail")
+                    if "error" not in cdp_result:
+                        all_neighbors.extend(parse_cdp_neighbors(cdp_result.get("output", "")))
+                    elif protocol == "cdp":
+                        error = cdp_result.get("error", "Failed to run CDP command")
+
+                if protocol in ("lldp", "both"):
+                    lldp_result = client.run_cli_command(device_id, "show lldp neighbors detail")
+                    if "error" not in lldp_result:
+                        all_neighbors.extend(parse_lldp_neighbors(lldp_result.get("output", "")))
+                    elif protocol == "lldp":
+                        error = lldp_result.get("error", "Failed to run LLDP command")
+
+                # Cross-reference with NetBox
+                # First, find the source device in NetBox
+                source_device = None
+                try:
+                    source_device = Device.objects.filter(name__iexact=device_name).first()
+                    if not source_device and strip_domain:
+                        # Try without domain
+                        source_device = Device.objects.filter(name__istartswith=device_name.split(".")[0]).first()
+                except Exception:
+                    pass
+
+                for neighbor in all_neighbors:
+                    neighbor_hostname = neighbor["device_id"]
+                    # Strip domain from neighbor hostname if configured
+                    if strip_domain and "." in neighbor_hostname:
+                        neighbor_hostname_short = neighbor_hostname.split(".")[0]
+                    else:
+                        neighbor_hostname_short = neighbor_hostname
+
+                    # Normalize interface names
+                    local_intf_name = normalize_interface_name(neighbor.get("local_interface", ""))
+                    remote_intf_name = normalize_interface_name(neighbor.get("remote_interface", ""))
+                    neighbor["local_interface_normalized"] = local_intf_name
+                    neighbor["remote_interface_normalized"] = remote_intf_name
+
+                    # Look up neighbor device in NetBox
+                    nb_neighbor = None
+                    nb_neighbor_vc = None
+                    device_match_method = None
+                    try:
+                        # 1. Exact name match (stripped hostname)
+                        nb_neighbor = Device.objects.filter(name__iexact=neighbor_hostname_short).first()
+                        if nb_neighbor:
+                            device_match_method = "name"
+                        # 2. Exact name match (full FQDN)
+                        if not nb_neighbor:
+                            nb_neighbor = Device.objects.filter(name__iexact=neighbor_hostname).first()
+                            if nb_neighbor:
+                                device_match_method = "fqdn"
+                        # 3. Virtual Chassis match — CDP/LLDP reports the VC name (e.g., "SHCd1c1")
+                        #    but NetBox names members as "SHCd1c1.1", "SHCd1c1.2", etc.
+                        if not nb_neighbor:
+                            nb_neighbor_vc = VirtualChassis.objects.filter(
+                                name__iexact=neighbor_hostname_short
+                            ).first()
+                            if not nb_neighbor_vc:
+                                nb_neighbor_vc = VirtualChassis.objects.filter(
+                                    name__iexact=neighbor_hostname
+                                ).first()
+                            if nb_neighbor_vc:
+                                nb_neighbor = nb_neighbor_vc.master
+                                device_match_method = "vc"
+                    except Exception:
+                        pass
+
+                    neighbor["nb_neighbor_device"] = nb_neighbor
+                    neighbor["nb_neighbor_url"] = nb_neighbor.get_absolute_url() if nb_neighbor else None
+                    neighbor["nb_neighbor_vc"] = nb_neighbor_vc
+                    neighbor["device_match_method"] = device_match_method
+
+                    # Look up local interface on source device
+                    # Try all name variants (full name, abbreviation, original)
+                    # e.g., CDP says "FastEthernet0/0" but NetBox may have "Fa0/0"
+                    local_intf = None
+                    local_match_info = None
+                    local_variants = get_interface_name_variants(neighbor.get("local_interface", ""))
+                    if source_device and local_variants:
+                        for variant in local_variants:
+                            local_intf = DcimInterface.objects.filter(
+                                device=source_device, name=variant
+                            ).first()
+                            if local_intf:
+                                if variant != neighbor.get("local_interface", ""):
+                                    local_match_info = f"matched as {variant}"
+                                break
+                        # If source is in a VC, search all members
+                        if not local_intf and source_device.virtual_chassis:
+                            for variant in local_variants:
+                                local_intf = DcimInterface.objects.filter(
+                                    device__virtual_chassis=source_device.virtual_chassis,
+                                    name=variant,
+                                ).first()
+                                if local_intf:
+                                    local_match_info = f"on VC member {local_intf.device.name}"
+                                    if variant != neighbor.get("local_interface", ""):
+                                        local_match_info += f" as {variant}"
+                                    break
+                    neighbor["nb_local_interface"] = local_intf
+                    neighbor["nb_local_interface_id"] = local_intf.pk if local_intf else None
+                    neighbor["local_match_info"] = local_match_info
+
+                    # Look up remote interface on neighbor device
+                    # Try all name variants, search across VC members if applicable
+                    remote_intf = None
+                    remote_match_info = None
+                    remote_variants = get_interface_name_variants(neighbor.get("remote_interface", ""))
+                    if nb_neighbor and remote_variants:
+                        for variant in remote_variants:
+                            remote_intf = DcimInterface.objects.filter(
+                                device=nb_neighbor, name=variant
+                            ).first()
+                            if remote_intf:
+                                if variant != neighbor.get("remote_interface", ""):
+                                    remote_match_info = f"matched as {variant}"
+                                break
+                        # If neighbor is in a VC, search all members
+                        if not remote_intf and (nb_neighbor_vc or nb_neighbor.virtual_chassis):
+                            vc = nb_neighbor_vc or nb_neighbor.virtual_chassis
+                            for variant in remote_variants:
+                                remote_intf = DcimInterface.objects.filter(
+                                    device__virtual_chassis=vc,
+                                    name=variant,
+                                ).first()
+                                if remote_intf:
+                                    remote_match_info = f"on VC member {remote_intf.device.name}"
+                                    if variant != neighbor.get("remote_interface", ""):
+                                        remote_match_info += f" as {variant}"
+                                    break
+                    neighbor["nb_remote_interface"] = remote_intf
+                    neighbor["nb_remote_interface_id"] = remote_intf.pk if remote_intf else None
+                    neighbor["remote_match_info"] = remote_match_info
+
+                    # Check cable status
+                    if local_intf and remote_intf:
+                        if local_intf.cable and remote_intf.cable and local_intf.cable == remote_intf.cable:
+                            neighbor["cable_status"] = "connected"
+                            neighbor["cable_id"] = local_intf.cable.pk
+                        elif local_intf.cable or remote_intf.cable:
+                            neighbor["cable_status"] = "mismatch"
+                        else:
+                            neighbor["cable_status"] = "missing"
+                    elif local_intf or remote_intf:
+                        neighbor["cable_status"] = "partial"
+                    else:
+                        neighbor["cable_status"] = "unknown"
+
+                # Build a lookup of CC device names for enrichment
+                cc_name_to_id = {name.lower(): did for name, did in device_list}
+
+                # Enrich neighbors not in NetBox
+                for neighbor in all_neighbors:
+                    if neighbor.get("nb_neighbor_device"):
+                        continue  # Already matched in NetBox
+
+                    neighbor_hostname = neighbor["device_id"]
+                    if strip_domain and "." in neighbor_hostname:
+                        hostname_short = neighbor_hostname.split(".")[0]
+                    else:
+                        hostname_short = neighbor_hostname
+
+                    # Check if neighbor is in Catalyst Center
+                    cc_device_id = (
+                        cc_name_to_id.get(hostname_short.lower())
+                        or cc_name_to_id.get(neighbor_hostname.lower())
+                    )
+                    neighbor["cc_device_id"] = cc_device_id
+
+                    # Try to match CDP platform to a NetBox DeviceType
+                    # CDP platform looks like "cisco WS-C3650-48PD" or "Cisco IOS Software..."
+                    platform_str = neighbor.get("platform", "")
+                    matched_device_type = None
+                    if platform_str:
+                        from dcim.models import DeviceType
+
+                        # Extract potential model from platform string
+                        # Common patterns: "cisco WS-C3650-48PD", "C9300-48T"
+                        parts = platform_str.replace(",", "").split()
+                        for part in parts:
+                            # Skip generic words
+                            if part.lower() in ("cisco", "systems", "inc", "inc."):
+                                continue
+                            dt = DeviceType.objects.filter(model__iexact=part).first()
+                            if dt:
+                                matched_device_type = dt
+                                break
+                    neighbor["matched_device_type"] = matched_device_type
+
+                neighbors = all_neighbors
+
+            except Exception as e:
+                logger.error(f"Neighbor discovery error for {device_name}: {e}")
+                error = str(e)
+
+        # Count summary stats
+        stats = {
+            "total": len(neighbors),
+            "connected": sum(1 for n in neighbors if n.get("cable_status") == "connected"),
+            "missing": sum(1 for n in neighbors if n.get("cable_status") == "missing"),
+            "unknown": sum(1 for n in neighbors if n.get("cable_status") in ("unknown", "partial")),
+            "mismatch": sum(1 for n in neighbors if n.get("cable_status") == "mismatch"),
+        }
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "device_list": device_list,
+                "device_id": device_id,
+                "device_name": device_name,
+                "protocol": protocol,
+                "neighbors": neighbors,
+                "stats": stats,
+                "error": error,
+                "catalyst_url": catalyst_url,
+                "source_device": source_device if device_id else None,
+            },
+        )
+
+
+class CreateCablesView(LoginRequiredMixin, PermissionRequiredMixin, View):
+    """Create cables in NetBox from discovered neighbor connections."""
+
+    permission_required = "dcim.add_cable"
+
+    def post(self, request):
+        from dcim.models import Cable, CableTermination
+        from dcim.models import Interface as DcimInterface
+        from django.contrib.contenttypes.models import ContentType
+
+        pairs = request.POST.getlist("cable_pair")
+        if not pairs:
+            return JsonResponse({"error": "No cable pairs selected"}, status=400)
+
+        iface_ct = ContentType.objects.get_for_model(DcimInterface)
+        created = 0
+        cables = []
+        errors = []
+
+        for pair in pairs:
+            try:
+                local_id, remote_id = pair.split(":")
+                local_intf = DcimInterface.objects.get(pk=int(local_id))
+                remote_intf = DcimInterface.objects.get(pk=int(remote_id))
+
+                # Check neither interface already has a cable
+                if local_intf.cable:
+                    errors.append(f"{local_intf.device}:{local_intf} already has a cable")
+                    continue
+                if remote_intf.cable:
+                    errors.append(f"{remote_intf.device}:{remote_intf} already has a cable")
+                    continue
+
+                label = f"{local_intf.device}:{local_intf} <> {remote_intf.device}:{remote_intf}"[:100]
+                cable = Cable(status="connected", label=label)
+                cable.save()
+                CableTermination.objects.create(
+                    cable=cable, cable_end="A", termination_type=iface_ct, termination_id=local_intf.pk
+                )
+                CableTermination.objects.create(
+                    cable=cable, cable_end="B", termination_type=iface_ct, termination_id=remote_intf.pk
+                )
+                created += 1
+                cables.append({
+                    "id": cable.pk,
+                    "label": label,
+                    "url": f"/dcim/cables/{cable.pk}/",
+                })
+
+            except DcimInterface.DoesNotExist:
+                errors.append(f"Interface not found for pair {pair}")
+            except Exception as e:
+                errors.append(f"Error creating cable for {pair}: {e}")
+
+        return JsonResponse({
+            "created": created,
+            "cables": cables,
+            "errors": errors,
+        })

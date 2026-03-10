@@ -73,6 +73,62 @@ document.getElementById('add-to-inventory-btn').addEventListener('click', functi
 });
 {% endif %}
 </script>
+{% else %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-plus-network"></i> Add to Catalyst Center
+        </h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-2">
+            This device needs a <strong>primary IP address</strong> (for inventory discovery) or <strong>serial number</strong> (for PnP) to be added to Catalyst Center.
+        </p>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <button type="button" class="btn btn-outline-primary btn-sm assign-ip-btn">
+                <i class="mdi mdi-dns"></i> Lookup DNS &amp; Assign IP
+            </button>
+            <small class="text-muted">Resolves <strong>{{ object.name }}</strong> via DNS and assigns as primary IP</small>
+        </div>
+        <span class="assign-ip-result d-block mt-2"></span>
+    </div>
+</div>
+<script>
+document.querySelectorAll('.assign-ip-btn').forEach(function(btn) {
+    if (btn._bound) return;
+    btn._bound = true;
+    btn.addEventListener('click', function() {
+        var resultSpan = btn.closest('.card-body').querySelector('.assign-ip-result');
+        if (!confirm('Resolve {{ object.name }} via DNS and assign the IP as primary?')) return;
+        btn.disabled = true;
+        var origHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Resolving...';
+        resultSpan.innerHTML = '';
+        var formData = new FormData();
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        fetch('{% url "plugins:netbox_catalyst_center:assign_primary_ip" object.pk %}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                resultSpan.innerHTML = '<span class="text-success"><i class="mdi mdi-check-circle"></i> ' + data.message + '. Refreshing...</span>';
+                setTimeout(function() { window.location.reload(); }, 2000);
+            } else {
+                resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</span>';
+                btn.disabled = false;
+                btn.innerHTML = origHTML;
+            }
+        })
+        .catch(function(err) {
+            resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> Request failed</span>';
+            btn.disabled = false;
+            btn.innerHTML = origHTML;
+        });
+    });
+});
+</script>
 {% endif %}
 {% elif client_data %}
 <div class="row">
@@ -482,6 +538,62 @@ document.getElementById('add-to-inventory-btn2').addEventListener('click', funct
 });
 {% endif %}
 </script>
+{% else %}
+<div class="card mt-3">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            <i class="mdi mdi-plus-network"></i> Add to Catalyst Center
+        </h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-2">
+            This device needs a <strong>primary IP address</strong> (for inventory discovery) or <strong>serial number</strong> (for PnP) to be added to Catalyst Center.
+        </p>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <button type="button" class="btn btn-outline-primary btn-sm assign-ip-btn">
+                <i class="mdi mdi-dns"></i> Lookup DNS &amp; Assign IP
+            </button>
+            <small class="text-muted">Resolves <strong>{{ object.name }}</strong> via DNS and assigns as primary IP</small>
+        </div>
+        <span class="assign-ip-result d-block mt-2"></span>
+    </div>
+</div>
+<script>
+document.querySelectorAll('.assign-ip-btn').forEach(function(btn) {
+    if (btn._bound) return;
+    btn._bound = true;
+    btn.addEventListener('click', function() {
+        var resultSpan = btn.closest('.card-body').querySelector('.assign-ip-result');
+        if (!confirm('Resolve {{ object.name }} via DNS and assign the IP as primary?')) return;
+        btn.disabled = true;
+        var origHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Resolving...';
+        resultSpan.innerHTML = '';
+        var formData = new FormData();
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        fetch('{% url "plugins:netbox_catalyst_center:assign_primary_ip" object.pk %}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                resultSpan.innerHTML = '<span class="text-success"><i class="mdi mdi-check-circle"></i> ' + data.message + '. Refreshing...</span>';
+                setTimeout(function() { window.location.reload(); }, 2000);
+            } else {
+                resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> ' + data.error + '</span>';
+                btn.disabled = false;
+                btn.innerHTML = origHTML;
+            }
+        })
+        .catch(function(err) {
+            resultSpan.innerHTML = '<span class="text-danger"><i class="mdi mdi-alert-circle"></i> Request failed</span>';
+            btn.disabled = false;
+            btn.innerHTML = origHTML;
+        });
+    });
+});
+</script>
 {% endif %}
 {% endif %}
 
@@ -701,9 +813,14 @@ document.getElementById('add-to-inventory-btn2').addEventListener('click', funct
 </div>
 {% endif %}
 
-<!-- External link to Catalyst Center -->
-{% if catalyst_url %}
-<div class="mt-3">
+<!-- External links -->
+<div class="mt-3 d-flex gap-2 flex-wrap">
+    {% if client_data.device_id %}
+    <a href="{% url 'plugins:netbox_catalyst_center:neighbor_discovery' %}?device={{ client_data.device_id }}&protocol=cdp" class="btn btn-outline-success btn-sm">
+        <i class="mdi mdi-lan-connect"></i> Discover Neighbors
+    </a>
+    {% endif %}
+    {% if catalyst_url %}
     {% if client_data.device_id %}
     <a href="{{ catalyst_url }}/dna/provision/devices/inventory/device-details?deviceId={{ client_data.device_id }}" target="_blank" class="btn btn-primary btn-sm">
         <i class="mdi mdi-open-in-new"></i> View in Catalyst Center
@@ -713,8 +830,8 @@ document.getElementById('add-to-inventory-btn2').addEventListener('click', funct
         <i class="mdi mdi-open-in-new"></i> Open Catalyst Center
     </a>
     {% endif %}
+    {% endif %}
 </div>
-{% endif %}
 
 {% if client_data %}
 <script>

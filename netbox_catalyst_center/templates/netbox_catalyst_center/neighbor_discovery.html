@@ -1,0 +1,342 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+
+{% block title %}Catalyst Center Neighbor Discovery{% endblock %}
+
+{% block header %}
+<h1 class="ps-3 pt-2"><i class="mdi mdi-lan-connect"></i> Catalyst Center Neighbor Discovery</h1>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-lan-connect"></i> Discover CDP/LLDP Neighbors
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="get" class="row g-3 align-items-end">
+                    <div class="col-md-5">
+                        <label for="device" class="form-label">Device</label>
+                        <select class="form-select" id="device" name="device">
+                            <option value="">-- Select device --</option>
+                            {% for name, did in device_list %}
+                            <option value="{{ did }}" {% if did == device_id %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="protocol" class="form-label">Protocol</label>
+                        <select class="form-select" id="protocol" name="protocol">
+                            <option value="cdp" {% if protocol == "cdp" %}selected{% endif %}>CDP</option>
+                            <option value="lldp" {% if protocol == "lldp" %}selected{% endif %}>LLDP</option>
+                            <option value="both" {% if protocol == "both" %}selected{% endif %}>Both (CDP + LLDP)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100" id="discover-btn">
+                            <i class="mdi mdi-magnify"></i> Discover
+                        </button>
+                    </div>
+                    <div class="col-md-2">
+                        {% if catalyst_url and device_id %}
+                        <a href="{{ catalyst_url }}/dna/assurance/device/details?id={{ device_id }}" target="_blank" class="btn btn-outline-primary w-100">
+                            <i class="mdi mdi-open-in-new"></i> Catalyst Center
+                        </a>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">
+    <i class="mdi mdi-alert-circle"></i> {{ error }}
+</div>
+{% endif %}
+
+{% if device_id and neighbors %}
+{# Summary stats #}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-lan-connect"></i>
+                    Neighbors for <strong>{{ device_name }}</strong>
+                </h5>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge text-bg-primary">{{ stats.total }} total</span>
+                    {% if stats.connected %}
+                    <span class="badge text-bg-success">{{ stats.connected }} connected</span>
+                    {% endif %}
+                    {% if stats.missing %}
+                    <span class="badge text-bg-warning">{{ stats.missing }} missing cable</span>
+                    {% endif %}
+                    {% if stats.unknown %}
+                    <span class="badge text-bg-secondary">{{ stats.unknown }} unknown</span>
+                    {% endif %}
+                    {% if stats.mismatch %}
+                    <span class="badge text-bg-danger">{{ stats.mismatch }} mismatch</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <form id="cable-form" method="post" action="{% url 'plugins:netbox_catalyst_center:create_cables' %}">
+                    {% csrf_token %}
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width: 30px;">
+                                        <input type="checkbox" id="select-all" class="form-check-input" title="Select all eligible">
+                                    </th>
+                                    <th>Protocol</th>
+                                    <th>Local Interface</th>
+                                    <th>Neighbor</th>
+                                    <th>Remote Interface</th>
+                                    <th>Platform</th>
+                                    <th>Cable Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for neighbor in neighbors %}
+                                <tr>
+                                    <td>
+                                        {% if neighbor.cable_status == "missing" and neighbor.nb_local_interface_id and neighbor.nb_remote_interface_id %}
+                                        <input type="checkbox" name="cable_pair" class="form-check-input cable-checkbox"
+                                               value="{{ neighbor.nb_local_interface_id }}:{{ neighbor.nb_remote_interface_id }}">
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge {% if neighbor.protocol == 'CDP' %}text-bg-info{% else %}text-bg-secondary{% endif %}">
+                                            {{ neighbor.protocol }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if neighbor.nb_local_interface %}
+                                        <a href="{{ neighbor.nb_local_interface.get_absolute_url }}">{{ neighbor.nb_local_interface.name }}</a>
+                                        {% if neighbor.local_match_info %}
+                                        <br><span class="text-muted small"><i class="mdi mdi-information-outline"></i> {{ neighbor.local_match_info }}</span>
+                                        {% endif %}
+                                        {% else %}
+                                        {{ neighbor.local_interface }}
+                                        {% if neighbor.local_interface_normalized != neighbor.local_interface %}
+                                        <span class="text-muted small">({{ neighbor.local_interface_normalized }})</span>
+                                        {% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if neighbor.nb_neighbor_url %}
+                                        <a href="{{ neighbor.nb_neighbor_url }}">{{ neighbor.nb_neighbor_device.name }}</a>
+                                        {% if neighbor.device_match_method == "vc" %}
+                                        <br><span class="text-muted small"><i class="mdi mdi-information-outline"></i> via VC "{{ neighbor.nb_neighbor_vc.name }}"</span>
+                                        {% elif neighbor.device_match_method == "fqdn" %}
+                                        <br><span class="text-muted small"><i class="mdi mdi-information-outline"></i> matched by FQDN</span>
+                                        {% endif %}
+                                        {% else %}
+                                        {{ neighbor.device_id }}
+                                        {% if neighbor.cc_device_id %}
+                                        <br><span class="text-muted small"><i class="mdi mdi-information-outline"></i> in Catalyst Center</span>
+                                        <br>
+                                        <a href="{% url 'plugins:netbox_catalyst_center:import_page' %}?q={{ neighbor.device_id }}" class="btn btn-outline-success btn-sm py-0 px-1 mt-1" title="Import from Catalyst Center">
+                                            <i class="mdi mdi-download"></i> Import
+                                        </a>
+                                        {% else %}
+                                        <span class="text-muted small">(not in NetBox or CC)</span>
+                                        {% endif %}
+                                        {% if neighbor.matched_device_type %}
+                                        <br>
+                                        <a href="/dcim/devices/add/?name={{ neighbor.device_id|urlencode }}&device_type={{ neighbor.matched_device_type.pk }}{% if source_device.site %}&site={{ source_device.site.pk }}{% endif %}" class="btn btn-outline-primary btn-sm py-0 px-1 mt-1" title="Create device in NetBox using {{ neighbor.matched_device_type }}">
+                                            <i class="mdi mdi-plus"></i> {{ neighbor.matched_device_type.model }}
+                                        </a>
+                                        {% elif not neighbor.cc_device_id %}
+                                        <br>
+                                        <a href="/dcim/devices/add/?name={{ neighbor.device_id|urlencode }}{% if source_device.site %}&site={{ source_device.site.pk }}{% endif %}" class="btn btn-outline-secondary btn-sm py-0 px-1 mt-1" title="Create device in NetBox manually">
+                                            <i class="mdi mdi-plus"></i> Create
+                                        </a>
+                                        {% endif %}
+                                        {% endif %}
+                                        {% if neighbor.ip_address %}
+                                        <br><span class="text-muted small">{{ neighbor.ip_address }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if neighbor.nb_remote_interface %}
+                                        <a href="{{ neighbor.nb_remote_interface.get_absolute_url }}">{{ neighbor.nb_remote_interface.name }}</a>
+                                        {% if neighbor.remote_match_info %}
+                                        <br><span class="text-muted small"><i class="mdi mdi-information-outline"></i> {{ neighbor.remote_match_info }}</span>
+                                        {% endif %}
+                                        {% else %}
+                                        {{ neighbor.remote_interface }}
+                                        {% if neighbor.remote_interface_normalized != neighbor.remote_interface %}
+                                        <span class="text-muted small">({{ neighbor.remote_interface_normalized }})</span>
+                                        {% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td class="small">
+                                        {{ neighbor.platform|truncatechars:50 }}
+                                        {% if neighbor.matched_device_type %}
+                                        <br><a href="{{ neighbor.matched_device_type.get_absolute_url }}" class="badge text-bg-info text-decoration-none">
+                                            <i class="mdi mdi-check"></i> {{ neighbor.matched_device_type }}
+                                        </a>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if neighbor.cable_status == "connected" %}
+                                        <a href="/dcim/cables/{{ neighbor.cable_id }}/" class="badge text-bg-success text-decoration-none">
+                                            <i class="mdi mdi-check-circle"></i> Connected
+                                        </a>
+                                        {% elif neighbor.cable_status == "missing" %}
+                                        <span class="badge text-bg-warning">
+                                            <i class="mdi mdi-cable-data"></i> No Cable
+                                        </span>
+                                        {% elif neighbor.cable_status == "mismatch" %}
+                                        <span class="badge text-bg-danger">
+                                            <i class="mdi mdi-alert"></i> Mismatch
+                                        </span>
+                                        {% elif neighbor.cable_status == "partial" %}
+                                        <span class="badge text-bg-secondary">
+                                            <i class="mdi mdi-help-circle"></i> Partial Match
+                                        </span>
+                                        {% else %}
+                                        <span class="badge text-bg-secondary">
+                                            <i class="mdi mdi-help-circle"></i> Unknown
+                                        </span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {% if stats.missing > 0 %}
+                    <div class="card-footer d-flex justify-content-between align-items-center">
+                        <span class="text-muted small">
+                            Select neighbors with "No Cable" status to create cables in NetBox.
+                        </span>
+                        <button type="button" class="btn btn-success" id="create-cables-btn" disabled>
+                            <i class="mdi mdi-cable-data"></i> Create Selected Cables
+                        </button>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% elif device_id and not error %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body text-center py-4 text-muted">
+                <i class="mdi mdi-lan-disconnect" style="font-size: 2rem;"></i>
+                <p class="mt-2">No neighbors discovered for {{ device_name }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Select all checkbox
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            document.querySelectorAll('.cable-checkbox').forEach(cb => {
+                cb.checked = this.checked;
+            });
+            updateCreateButton();
+        });
+    }
+
+    // Individual checkboxes
+    document.querySelectorAll('.cable-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateCreateButton);
+    });
+
+    // Create cables button
+    const createBtn = document.getElementById('create-cables-btn');
+    if (createBtn) {
+        createBtn.addEventListener('click', function() {
+            const checked = document.querySelectorAll('.cable-checkbox:checked');
+            if (checked.length === 0) return;
+
+            if (!confirm(`Create ${checked.length} cable(s) in NetBox?`)) return;
+
+            this.disabled = true;
+            this.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Creating...';
+
+            const form = document.getElementById('cable-form');
+            const formData = new FormData(form);
+
+            fetch(form.action, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.created > 0 && data.cables && data.cables.length > 0) {
+                    // Show success with cable links instead of alert
+                    const footer = document.querySelector('.card-footer');
+                    if (footer) {
+                        let links = data.cables.map(c =>
+                            `<a href="${c.url}" class="badge text-bg-success text-decoration-none me-1"><i class="mdi mdi-cable-data"></i> ${c.label}</a>`
+                        ).join(' ');
+                        let errHtml = '';
+                        if (data.errors && data.errors.length > 0) {
+                            errHtml = `<div class="text-danger small mt-1">${data.errors.join('<br>')}</div>`;
+                        }
+                        footer.innerHTML = `<div><span class="text-success"><i class="mdi mdi-check-circle"></i> Created ${data.created} cable(s)</span>${errHtml}<div class="mt-2">${links}</div><a href="" class="btn btn-sm btn-outline-primary mt-2"><i class="mdi mdi-refresh"></i> Refresh</a></div>`;
+                    }
+                } else {
+                    let msg = 'No cables created.';
+                    if (data.errors && data.errors.length > 0) {
+                        msg += '\n\n' + data.errors.join('\n');
+                    }
+                    alert(msg);
+                    window.location.reload();
+                }
+            })
+            .catch(err => {
+                alert('Error creating cables: ' + err);
+                this.disabled = false;
+                this.innerHTML = '<i class="mdi mdi-cable-data"></i> Create Selected Cables';
+            });
+        });
+    }
+
+    // Show spinner while discovery runs
+    const form = document.querySelector('form[method="get"]');
+    if (form) {
+        form.addEventListener('submit', function() {
+            const btn = document.getElementById('discover-btn');
+            if (btn && document.getElementById('device').value) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Discovering...';
+            }
+        });
+    }
+
+    function updateCreateButton() {
+        const btn = document.getElementById('create-cables-btn');
+        if (btn) {
+            const checked = document.querySelectorAll('.cable-checkbox:checked').length;
+            btn.disabled = checked === 0;
+            btn.innerHTML = checked > 0
+                ? `<i class="mdi mdi-cable-data"></i> Create ${checked} Cable(s)`
+                : '<i class="mdi mdi-cable-data"></i> Create Selected Cables';
+        }
+    }
+});
+</script>
+{% endblock %}
