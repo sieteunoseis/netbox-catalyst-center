@@ -2774,7 +2774,8 @@ class SearchDevicesView(View):
             # Check if device exists by hostname or serial
             existing = None
             if hostname:
-                hostname_base = hostname.lower().replace(".ohsu.edu", "")
+                from .catalyst_client import CatalystCenterClient
+                hostname_base = CatalystCenterClient._strip_domain(hostname.lower())
                 existing = Device.objects.filter(name__iexact=hostname_base).first()
                 if not existing:
                     existing = Device.objects.filter(name__iexact=hostname).first()
@@ -2786,7 +2787,8 @@ class SearchDevicesView(View):
             is_stack = device.get("is_stack", False)
             stack_count = device.get("stack_count", 1)
             if not existing and is_virtual_chassis_enabled() and is_stack and stack_count > 1:
-                hostname_base = hostname.lower().replace(".ohsu.edu", "") if hostname else ""
+                from .catalyst_client import CatalystCenterClient
+                hostname_base = CatalystCenterClient._strip_domain(hostname.lower()) if hostname else ""
                 for member_num in range(1, stack_count + 1):
                     member_name = f"{hostname_base}.{member_num}"
                     existing = Device.objects.filter(name__iexact=member_name).first()
@@ -3183,8 +3185,9 @@ class ImportDevicesView(View):
                 results["errors"].append({"device": dnac_device, "error": "No hostname"})
                 continue
 
-            # Normalize hostname (remove domain)
-            hostname_base = hostname.replace(".ohsu.edu", "")
+            # Normalize hostname using configured strip_domain setting
+            from .catalyst_client import CatalystCenterClient
+            hostname_base = CatalystCenterClient._strip_domain(hostname)
 
             # Check if device already exists
             existing = Device.objects.filter(name__iexact=hostname_base).first()
