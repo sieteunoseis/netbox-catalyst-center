@@ -62,7 +62,7 @@
                 <div id="search-results" style="display: none;">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
-                            <span id="result-count" class="badge bg-info me-2"></span>
+                            <span id="result-count" class="badge text-bg-info me-2"></span>
                             <span id="result-info" class="text-muted small"></span>
                         </div>
                         <div>
@@ -123,7 +123,7 @@
                             <option value="{{ location.pk }}" data-site-id="{{ location.site.pk }}">{{ location.name }}</option>
                             {% endfor %}
                         </select>
-                        <div class="form-text">Optional. Filtered by the selected site.</div>
+                        <div class="form-text" id="import-location-help">Optional. Filtered by the selected site.</div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Device Role</label>
@@ -397,7 +397,7 @@ function renderSearchResults(devices, totalInDnac) {
     var existingCount = devices.filter(d => d.exists_in_netbox).length;
 
     document.getElementById('result-count').textContent = devices.length + ' device' + (devices.length !== 1 ? 's' : '') + ' found';
-    document.getElementById('result-count').className = 'badge bg-primary me-2';
+    document.getElementById('result-count').className = 'badge text-bg-primary me-2';
     document.getElementById('result-info').textContent =
         '(' + newCount + ' new, ' + existingCount + ' already in NetBox, ' + totalInDnac + ' total in inventory)';
 
@@ -412,8 +412,8 @@ function renderSearchResults(devices, totalInDnac) {
             : '<input type="checkbox" class="form-check-input device-checkbox" data-index="' + index + '">';
 
         var statusBadge = device.exists_in_netbox
-            ? '<a href="' + device.netbox_device_url + '" class="badge bg-success text-white text-decoration-none"><i class="mdi mdi-check"></i> In NetBox</a>'
-            : '<span class="badge bg-warning text-dark">New</span>';
+            ? '<a href="' + device.netbox_device_url + '" class="badge text-bg-success text-decoration-none"><i class="mdi mdi-check"></i> In NetBox</a>'
+            : '<span class="badge text-bg-warning">New</span>';
 
         var reachability = device.reachability_status === 'Reachable'
             ? '<i class="mdi mdi-check-circle text-success" title="Reachable"></i>'
@@ -422,7 +422,7 @@ function renderSearchResults(devices, totalInDnac) {
         var roleDisplay = device.role || device.device_family || '-';
 
         var stackBadge = device.is_stack
-            ? ' <span class="badge bg-info text-white" title="' + device.stack_count + '-member stack"><i class="mdi mdi-layers-triple"></i> Stack (' + device.stack_count + ')</span>'
+            ? ' <span class="badge text-bg-info" title="' + device.stack_count + '-member stack"><i class="mdi mdi-layers-triple"></i> Stack (' + device.stack_count + ')</span>'
             : '';
 
         row.innerHTML =
@@ -487,38 +487,6 @@ function updateSelectedCount() {
         document.getElementById('import-btn').disabled = count === 0;
     }
 }
-
-// Cascade Location options based on the selected Site
-document.getElementById('import-site').addEventListener('change', function() {
-    var siteId = this.value;
-    var locationSelect = document.getElementById('import-location');
-    locationSelect.value = '';
-
-    if (!siteId) {
-        locationSelect.disabled = true;
-        Array.prototype.forEach.call(locationSelect.options, function(opt) {
-            if (opt.value !== '') opt.style.display = 'none';
-        });
-        locationSelect.options[0].textContent = 'Select a site first';
-        return;
-    }
-
-    var visibleCount = 0;
-    Array.prototype.forEach.call(locationSelect.options, function(opt) {
-        if (opt.value === '') return;
-        if (opt.dataset.siteId === siteId) {
-            opt.style.display = '';
-            visibleCount++;
-        } else {
-            opt.style.display = 'none';
-        }
-    });
-
-    locationSelect.disabled = visibleCount === 0;
-    locationSelect.options[0].textContent = visibleCount === 0
-        ? 'No locations in this site'
-        : 'No location';
-});
 
 // Import button
 document.getElementById('import-btn').addEventListener('click', function() {
@@ -608,7 +576,7 @@ document.getElementById('import-btn').addEventListener('click', function() {
 
                     // Check if this is a virtual chassis import
                     var vcBadge = d.virtual_chassis
-                        ? ' <span class="badge bg-info text-white"><i class="mdi mdi-layers-triple"></i> Virtual Chassis (' + d.member_count + ' members)</span>'
+                        ? ' <span class="badge text-bg-info"><i class="mdi mdi-layers-triple"></i> Virtual Chassis (' + d.member_count + ' members)</span>'
                         : '';
 
                     // Show appropriate view button(s)
@@ -668,5 +636,71 @@ document.getElementById('import-btn').addEventListener('click', function() {
         updateSelectedCount();
     });
 });
+</script>
+
+<!-- Site→Location cascade — drives TomSelect's API on the wrapped <select>
+     since DOM mutation of the underlying <option> list isn't reflected in
+     the visible widget. Standalone block so an error elsewhere can't sink it. -->
+<script>
+window.__ccAllLocations = [];
+
+(function captureLocations() {
+    var locationSelect = document.getElementById('import-location');
+    if (!locationSelect) return;
+    Array.prototype.forEach.call(locationSelect.querySelectorAll('option[data-site-id]'), function(opt) {
+        window.__ccAllLocations.push({
+            value: opt.value,
+            text: opt.textContent.trim(),
+            siteId: opt.dataset.siteId,
+        });
+    });
+})();
+
+function applyLocationCascade(siteId) {
+    var locationSelect = document.getElementById('import-location');
+    if (!locationSelect) return;
+    var ts = locationSelect.tomselect;
+    var matches = siteId
+        ? window.__ccAllLocations.filter(function(l) { return l.siteId === String(siteId); })
+        : [];
+
+    if (ts) {
+        if (matches.length > 0) ts.enable();
+        ts.clear(true);
+        ts.clearOptions();
+        matches.forEach(function(l) {
+            ts.addOption({ value: String(l.value), text: l.text });
+        });
+        if (typeof ts.refreshItems === 'function') ts.refreshItems();
+        ts.refreshOptions(false);
+        if (matches.length === 0) ts.disable();
+    } else {
+        locationSelect.value = '';
+        Array.prototype.forEach.call(locationSelect.options, function(opt) {
+            if (opt.value === '') return;
+            opt.hidden = (opt.dataset.siteId !== String(siteId));
+        });
+        locationSelect.disabled = matches.length === 0;
+    }
+
+    var help = document.getElementById('import-location-help');
+    if (help) {
+        help.textContent = siteId
+            ? matches.length + ' location' + (matches.length === 1 ? '' : 's')
+                + ' available in selected site.'
+            : 'Optional. Filtered by the selected site.';
+    }
+}
+
+(function bindSiteCascade() {
+    var siteSelect = document.getElementById('import-site');
+    if (!siteSelect) return;
+    siteSelect.addEventListener('change', function() { applyLocationCascade(this.value); });
+    if (siteSelect.tomselect && typeof siteSelect.tomselect.on === 'function') {
+        siteSelect.tomselect.on('change', function(value) { applyLocationCascade(value); });
+    }
+    // Defer initial apply until TomSelect has wrapped the location select
+    setTimeout(function() { applyLocationCascade(siteSelect.value); }, 100);
+})();
 </script>
 {% endblock %}

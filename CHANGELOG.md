@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Device-type lookup during import now matches the [netbox-community devicetype-library](https://github.com/netbox-community/devicetype-library) convention. Catalyst Center returns the part number as `platformId` (e.g. `C9300-48P`); the plugin now resolves it as: (1) `part_number__iexact`, (2) `model__iexact`, (3) create new. Previously only `model` was matched, so library device types with their console-port, power-port, and module-bay templates were bypassed and a duplicate empty device type was created. Resolves [#18](https://github.com/sieteunoseis/netbox-catalyst-center/issues/18).
 - The manual "Management" interface added during import now reuses an existing template-instantiated interface of the same name (NetBox auto-instantiates device-type component templates on `Device.save()`) instead of erroring on a unique-key collision.
 
+### Fixed
+
+- The "_N_ devices found" badge on the import page is now readable — switched all import-page badges to Bootstrap 5.3's `text-bg-*` auto-contrast classes (the dynamic JS-applied `bg-primary` had no explicit `text-white`, rendering invisible against the blue background).
+
 ## [1.6.2] - 2026-05-05
 
 ### Fixed
