@@ -10,7 +10,7 @@ import logging
 from django.db.models.signals import post_migrate
 from netbox.plugins import PluginConfig
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 logger = logging.getLogger(__name__)
 

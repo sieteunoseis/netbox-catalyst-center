@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-05-05
+
+### Added
+
+- New **Sync Power Supplies** checkbox in the device tab's "Sync from Catalyst Center" panel. Pick it to sync PSUs without running a full interface sync. (PSU sync still runs as a side-effect of "Sync Interfaces" since both share the same equipment endpoint.)
+
+### Fixed
+
+- `_sync_power_supplies()` now skips empty PSU slots — entries reported by Catalyst Center for unpopulated bays (no `productId` and no `serial`) no longer create blank `InventoryItem` rows.
+
 ## [1.8.0] - 2026-05-05
 
 ### Added

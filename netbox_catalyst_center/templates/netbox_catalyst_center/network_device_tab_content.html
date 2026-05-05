@@ -798,6 +798,18 @@ document.querySelectorAll('.assign-ip-btn').forEach(function(btn) {
                         </small>
                     </label>
                 </div>
+                <div class="form-check sync-field mt-3">
+                    <input class="form-check-input" type="checkbox" id="sync-power-supplies">
+                    <label class="form-check-label" for="sync-power-supplies">
+                        <strong>Sync Power Supplies</strong>
+                        <br><small class="text-muted">
+                            Create or update an InventoryItem per installed PSU
+                            (model, serial, manufacturer). Empty slots are skipped.
+                            Already runs for free with "Sync Interfaces"; pick this to
+                            sync PSUs without touching interfaces.
+                        </small>
+                    </label>
+                </div>
             </div>
         </div>
         <div class="mt-3">
@@ -877,7 +889,8 @@ document.getElementById('sync-from-cc-btn').addEventListener('click', function()
         sync_cc_role: document.getElementById('sync-cc-role') ? document.getElementById('sync-cc-role').checked : false,
         sync_interfaces: document.getElementById('sync-interfaces') ? document.getElementById('sync-interfaces').checked : false,
         overwrite_ips: document.getElementById('overwrite-ips') ? document.getElementById('overwrite-ips').checked : false,
-        sync_poe: document.getElementById('sync-poe') ? document.getElementById('sync-poe').checked : false
+        sync_poe: document.getElementById('sync-poe') ? document.getElementById('sync-poe').checked : false,
+        sync_power_supplies: document.getElementById('sync-power-supplies') ? document.getElementById('sync-power-supplies').checked : false
     };
 
     // Check if at least one option is selected

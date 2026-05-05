@@ -736,6 +736,7 @@ class SyncDeviceFromDNACView(View):
         sync_interfaces = body.get("sync_interfaces", False)
         overwrite_ips = body.get("overwrite_ips", False)
         sync_poe = body.get("sync_poe", False)
+        sync_power_supplies = body.get("sync_power_supplies", False)
 
         client = get_client()
         if not client:
@@ -947,6 +948,37 @@ class SyncDeviceFromDNACView(View):
                     changes.append(f"POE: error - {str(e)}")
             else:
                 changes.append("POE: skipped (no device ID)")
+
+        # Sync power supplies — only invoke standalone if interface sync didn't
+        # already do it (the interface sync path runs PSU sync as a freebie
+        # since both share the same equipment endpoint).
+        if sync_power_supplies and not sync_interfaces:
+            device_id = dnac_data.get("device_id")
+            if device_id:
+                try:
+                    equipment_result = client.get_device_equipment(device_id)
+                    if "error" in equipment_result:
+                        changes.append(f"Power supplies: error - {equipment_result['error']}")
+                    else:
+                        psus = equipment_result.get("power_supplies", [])
+                        if device.virtual_chassis:
+                            # Distribute PSUs across stack members based on "Switch N" prefix.
+                            members = {d.vc_position: d for d in device.virtual_chassis.members.all()}
+                            buckets = {}
+                            for psu in psus:
+                                target = members.get(psu.get("stack_member")) or device
+                                buckets.setdefault(target.pk, (target, []))[1].append(psu)
+                            psu_count = sum(self._sync_power_supplies(t, ps) for t, ps in buckets.values())
+                        else:
+                            psu_count = self._sync_power_supplies(device, psus)
+                        if psu_count:
+                            changes.append(f"Power supplies: {psu_count} synced")
+                        else:
+                            changes.append("Power supplies: no changes")
+                except Exception as e:
+                    changes.append(f"Power supplies: error - {str(e)}")
+            else:
+                changes.append("Power supplies: skipped (no device ID)")
 
         if not changes:
             return JsonResponse(
@@ -2305,6 +2337,10 @@ class SyncDeviceFromDNACView(View):
 
             # Need at least a name to anchor the InventoryItem.
             if not name:
+                continue
+            # Skip empty PSU slots — CC reports the bay even when no power
+            # supply is installed in it. We only care about populated bays.
+            if not (product_id or serial):
                 continue
 
             # Manufacturer (normalize CC's "CISCO-AVAGO" style to "Cisco")
