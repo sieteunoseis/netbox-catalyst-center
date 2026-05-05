@@ -2551,9 +2551,7 @@ class AssignPrimaryIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
         import netaddr
 
         ip_obj = netaddr.IPAddress(ip_str)
-        matching_prefixes = Prefix.objects.filter(
-            prefix__net_contains=str(ip_obj)
-        ).order_by("-prefix__prefixlen")
+        matching_prefixes = Prefix.objects.filter(prefix__net_contains=str(ip_obj)).order_by("-prefix__prefixlen")
 
         if matching_prefixes.exists():
             best_prefix = matching_prefixes.first()
@@ -2602,7 +2600,11 @@ class AssignPrimaryIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
         device.primary_ip4 = ip_record
         device.save()
 
-        prefix_info = f" (from prefix {best_prefix.prefix})" if matching_prefixes.exists() else " (/32 — no matching prefix found)"
+        prefix_info = (
+            f" (from prefix {best_prefix.prefix})"
+            if matching_prefixes.exists()
+            else " (/32 — no matching prefix found)"
+        )
         intf_name = mgmt_intf.name
 
         return JsonResponse(
@@ -2775,6 +2777,7 @@ class SearchDevicesView(View):
             existing = None
             if hostname:
                 from .catalyst_client import CatalystCenterClient
+
                 hostname_base = CatalystCenterClient._strip_domain(hostname.lower())
                 existing = Device.objects.filter(name__iexact=hostname_base).first()
                 if not existing:
@@ -2788,6 +2791,7 @@ class SearchDevicesView(View):
             stack_count = device.get("stack_count", 1)
             if not existing and is_virtual_chassis_enabled() and is_stack and stack_count > 1:
                 from .catalyst_client import CatalystCenterClient
+
                 hostname_base = CatalystCenterClient._strip_domain(hostname.lower()) if hostname else ""
                 for member_num in range(1, stack_count + 1):
                     member_name = f"{hostname_base}.{member_num}"
@@ -3187,6 +3191,7 @@ class ImportDevicesView(View):
 
             # Normalize hostname using configured strip_domain setting
             from .catalyst_client import CatalystCenterClient
+
             hostname_base = CatalystCenterClient._strip_domain(hostname)
 
             # Check if device already exists
@@ -3883,13 +3888,9 @@ class NeighborDiscoveryView(LoginRequiredMixin, PermissionRequiredMixin, View):
                         # 3. Virtual Chassis match — CDP/LLDP reports the VC name (e.g., "SHCd1c1")
                         #    but NetBox names members as "SHCd1c1.1", "SHCd1c1.2", etc.
                         if not nb_neighbor:
-                            nb_neighbor_vc = VirtualChassis.objects.filter(
-                                name__iexact=neighbor_hostname_short
-                            ).first()
+                            nb_neighbor_vc = VirtualChassis.objects.filter(name__iexact=neighbor_hostname_short).first()
                             if not nb_neighbor_vc:
-                                nb_neighbor_vc = VirtualChassis.objects.filter(
-                                    name__iexact=neighbor_hostname
-                                ).first()
+                                nb_neighbor_vc = VirtualChassis.objects.filter(name__iexact=neighbor_hostname).first()
                             if nb_neighbor_vc:
                                 nb_neighbor = nb_neighbor_vc.master
                                 device_match_method = "vc"
@@ -3909,9 +3910,7 @@ class NeighborDiscoveryView(LoginRequiredMixin, PermissionRequiredMixin, View):
                     local_variants = get_interface_name_variants(neighbor.get("local_interface", ""))
                     if source_device and local_variants:
                         for variant in local_variants:
-                            local_intf = DcimInterface.objects.filter(
-                                device=source_device, name=variant
-                            ).first()
+                            local_intf = DcimInterface.objects.filter(device=source_device, name=variant).first()
                             if local_intf:
                                 if variant != neighbor.get("local_interface", ""):
                                     local_match_info = f"matched as {variant}"
@@ -3939,9 +3938,7 @@ class NeighborDiscoveryView(LoginRequiredMixin, PermissionRequiredMixin, View):
                     remote_variants = get_interface_name_variants(neighbor.get("remote_interface", ""))
                     if nb_neighbor and remote_variants:
                         for variant in remote_variants:
-                            remote_intf = DcimInterface.objects.filter(
-                                device=nb_neighbor, name=variant
-                            ).first()
+                            remote_intf = DcimInterface.objects.filter(device=nb_neighbor, name=variant).first()
                             if remote_intf:
                                 if variant != neighbor.get("remote_interface", ""):
                                     remote_match_info = f"matched as {variant}"
@@ -3992,9 +3989,8 @@ class NeighborDiscoveryView(LoginRequiredMixin, PermissionRequiredMixin, View):
                         hostname_short = neighbor_hostname
 
                     # Check if neighbor is in Catalyst Center
-                    cc_device_id = (
-                        cc_name_to_id.get(hostname_short.lower())
-                        or cc_name_to_id.get(neighbor_hostname.lower())
+                    cc_device_id = cc_name_to_id.get(hostname_short.lower()) or cc_name_to_id.get(
+                        neighbor_hostname.lower()
                     )
                     neighbor["cc_device_id"] = cc_device_id
 
@@ -4093,19 +4089,23 @@ class CreateCablesView(LoginRequiredMixin, PermissionRequiredMixin, View):
                     cable=cable, cable_end="B", termination_type=iface_ct, termination_id=remote_intf.pk
                 )
                 created += 1
-                cables.append({
-                    "id": cable.pk,
-                    "label": label,
-                    "url": f"/dcim/cables/{cable.pk}/",
-                })
+                cables.append(
+                    {
+                        "id": cable.pk,
+                        "label": label,
+                        "url": f"/dcim/cables/{cable.pk}/",
+                    }
+                )
 
             except DcimInterface.DoesNotExist:
                 errors.append(f"Interface not found for pair {pair}")
             except Exception as e:
                 errors.append(f"Error creating cable for {pair}: {e}")
 
-        return JsonResponse({
-            "created": created,
-            "cables": cables,
-            "errors": errors,
-        })
+        return JsonResponse(
+            {
+                "created": created,
+                "cables": cables,
+                "errors": errors,
+            }
+        )

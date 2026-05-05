@@ -187,7 +187,7 @@ def normalize_interface_name(name):
 
     for abbr, full in sorted(abbreviations.items(), key=lambda x: -len(x[0])):
         if name.startswith(abbr) and len(name) > len(abbr) and name[len(abbr)].isdigit():
-            return full + name[len(abbr):]
+            return full + name[len(abbr) :]
 
     return name
 
@@ -220,7 +220,7 @@ def abbreviate_interface_name(name):
 
     for full, abbr in sorted(full_to_abbr.items(), key=lambda x: -len(x[0])):
         if name.startswith(full):
-            return abbr + name[len(full):]
+            return abbr + name[len(full) :]
 
     return name
 
