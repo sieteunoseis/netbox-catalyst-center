@@ -105,7 +105,7 @@
             </div>
             <div class="card-body">
                 <div class="row g-3">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <label class="form-label">Default Site <span class="text-danger">*</span></label>
                         <select class="form-select" id="import-site" required>
                             <option value="">Select a site...</option>
@@ -115,7 +115,17 @@
                         </select>
                         <div class="form-text">All imported devices will be assigned to this site.</div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-4">
+                        <label class="form-label">Location</label>
+                        <select class="form-select" id="import-location" disabled>
+                            <option value="">Select a site first</option>
+                            {% for location in locations %}
+                            <option value="{{ location.pk }}" data-site-id="{{ location.site.pk }}">{{ location.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Optional. Filtered by the selected site.</div>
+                    </div>
+                    <div class="col-md-4">
                         <label class="form-label">Device Role</label>
                         <select class="form-select" id="import-role">
                             <option value="">Auto-detect from Catalyst Center</option>
@@ -478,6 +488,38 @@ function updateSelectedCount() {
     }
 }
 
+// Cascade Location options based on the selected Site
+document.getElementById('import-site').addEventListener('change', function() {
+    var siteId = this.value;
+    var locationSelect = document.getElementById('import-location');
+    locationSelect.value = '';
+
+    if (!siteId) {
+        locationSelect.disabled = true;
+        Array.prototype.forEach.call(locationSelect.options, function(opt) {
+            if (opt.value !== '') opt.style.display = 'none';
+        });
+        locationSelect.options[0].textContent = 'Select a site first';
+        return;
+    }
+
+    var visibleCount = 0;
+    Array.prototype.forEach.call(locationSelect.options, function(opt) {
+        if (opt.value === '') return;
+        if (opt.dataset.siteId === siteId) {
+            opt.style.display = '';
+            visibleCount++;
+        } else {
+            opt.style.display = 'none';
+        }
+    });
+
+    locationSelect.disabled = visibleCount === 0;
+    locationSelect.options[0].textContent = visibleCount === 0
+        ? 'No locations in this site'
+        : 'No location';
+});
+
 // Import button
 document.getElementById('import-btn').addEventListener('click', function() {
     var siteId = document.getElementById('import-site').value;
@@ -519,6 +561,7 @@ document.getElementById('import-btn').addEventListener('click', function() {
     btn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i> Importing...';
 
     var roleId = document.getElementById('import-role').value;
+    var locationId = document.getElementById('import-location').value;
 
     fetch('{% url "plugins:netbox_catalyst_center:import_devices" %}', {
         method: 'POST',
@@ -529,6 +572,7 @@ document.getElementById('import-btn').addEventListener('click', function() {
         body: JSON.stringify({
             devices: selectedDevices,
             default_site_id: parseInt(siteId),
+            default_location_id: locationId ? parseInt(locationId) : null,
             default_role_id: roleId ? parseInt(roleId) : null,
             sync_interfaces: document.getElementById('import-interfaces').checked
         })

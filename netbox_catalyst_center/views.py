@@ -287,6 +287,41 @@ def is_virtual_chassis_enabled():
     return config.get("enable_virtual_chassis", False)
 
 
+def resolve_device_type(manufacturer, platform_id):
+    """
+    Find or create a DeviceType for a Catalyst Center platformId.
+
+    Lookup order (Catalyst Center returns the part number, e.g. ``C9300-48P``,
+    which the netbox-community devicetype-library stores in ``part_number`` —
+    not ``model``):
+
+    1. ``part_number__iexact=platform_id`` — preferred, matches the library convention
+    2. ``model__iexact=platform_id`` — backwards-compatible with prior plugin versions
+    3. Create a new DeviceType with ``model=platform_id``
+
+    Returns ``(device_type, created)``.
+    """
+    from dcim.models import DeviceType
+
+    if not platform_id:
+        return None, False
+
+    dt = DeviceType.objects.filter(manufacturer=manufacturer, part_number__iexact=platform_id).first()
+    if dt:
+        return dt, False
+
+    dt = DeviceType.objects.filter(manufacturer=manufacturer, model__iexact=platform_id).first()
+    if dt:
+        return dt, False
+
+    dt = DeviceType.objects.create(
+        manufacturer=manufacturer,
+        model=platform_id,
+        slug=platform_id.lower().replace(" ", "-").replace("/", "-"),
+    )
+    return dt, True
+
+
 @register_model_view(Device, name="catalyst_center", path="catalyst-center")
 class DeviceCatalystCenterView(generic.ObjectView):
     """Display Catalyst Center client details for a Device with async loading."""
@@ -2721,7 +2756,7 @@ class ImportPageView(View):
 
     def get(self, request):
         """Display the import page."""
-        from dcim.models import DeviceRole, Site
+        from dcim.models import DeviceRole, Location, Site
 
         config = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {})
 
@@ -2731,6 +2766,7 @@ class ImportPageView(View):
             {
                 "config": config,
                 "sites": Site.objects.all().order_by("name"),
+                "locations": Location.objects.select_related("site").order_by("site__name", "name"),
                 "roles": DeviceRole.objects.all().order_by("name"),
             },
         )
@@ -2814,6 +2850,7 @@ def _import_as_virtual_chassis(
     default_site,
     device_platform,
     sync_interfaces,
+    default_location=None,
 ):
     """
     Import a stacked device as a Virtual Chassis with multiple member devices.
@@ -2832,6 +2869,7 @@ def _import_as_virtual_chassis(
         default_site: NetBox Site object
         device_platform: NetBox Platform object (or None)
         sync_interfaces: Whether to sync interfaces from CC
+        default_location: NetBox Location object within default_site (or None)
 
     Returns:
         dict with:
@@ -2897,13 +2935,7 @@ def _import_as_virtual_chassis(
                 # Fall back to the passed device_type if platform_list doesn't have enough entries
                 if platform_list and member_num <= len(platform_list):
                     member_platform = platform_list[member_num - 1]
-                    member_device_type, dt_created = DeviceType.objects.get_or_create(
-                        manufacturer=cisco_manufacturer,
-                        model=member_platform,
-                        defaults={
-                            "slug": member_platform.lower().replace(" ", "-").replace("/", "-"),
-                        },
-                    )
+                    member_device_type, dt_created = resolve_device_type(cisco_manufacturer, member_platform)
                     if dt_created:
                         newly_created_device_types.add(member_device_type.pk)
                 else:
@@ -2919,6 +2951,7 @@ def _import_as_virtual_chassis(
                     device_type=member_device_type,
                     role=role,
                     site=default_site,
+                    location=default_location,
                     serial=member_serial,
                     status="active",
                     platform=device_platform,
@@ -2964,13 +2997,17 @@ def _import_as_virtual_chassis(
             vc.member_count = len(created_members)
             vc.save()
 
-            # Create management interface on master device
-            mgmt_interface = Interface(
-                device=master_device,
-                name="Management",
-                type="1000base-t",
-            )
-            mgmt_interface.save()
+            # Reuse a Management interface if the device type template already
+            # instantiated one (NetBox auto-creates components from device type
+            # templates on Device.save()), otherwise create one.
+            mgmt_interface = master_device.interfaces.filter(name__iexact="Management").first()
+            if not mgmt_interface:
+                mgmt_interface = Interface(
+                    device=master_device,
+                    name="Management",
+                    type="1000base-t",
+                )
+                mgmt_interface.save()
 
             # Create IP address on master if available
             if management_ip:
@@ -3091,6 +3128,7 @@ class ImportDevicesView(View):
         Request body (JSON):
             devices: Array of device objects from search results
             default_site_id: Site ID to assign devices to
+            default_location_id: Location ID within the site (optional)
             default_role_id: Device role ID (optional)
         """
         import json
@@ -3099,6 +3137,7 @@ class ImportDevicesView(View):
             DeviceRole,
             DeviceType,
             Interface,
+            Location,
             Manufacturer,
             Platform,
             Site,
@@ -3112,6 +3151,7 @@ class ImportDevicesView(View):
 
         devices_to_import = body.get("devices", [])
         default_site_id = body.get("default_site_id")
+        default_location_id = body.get("default_location_id")
         default_role_id = body.get("default_role_id")
         sync_interfaces = body.get("sync_interfaces", False)
 
@@ -3134,6 +3174,17 @@ class ImportDevicesView(View):
             default_site = Site.objects.get(pk=default_site_id)
         except Site.DoesNotExist:
             return JsonResponse({"error": "Site not found"}, status=400)
+
+        # Get default location if specified — must belong to the chosen site
+        default_location = None
+        if default_location_id:
+            try:
+                default_location = Location.objects.get(pk=default_location_id, site=default_site)
+            except Location.DoesNotExist:
+                return JsonResponse(
+                    {"error": "Location not found or does not belong to the selected site"},
+                    status=400,
+                )
 
         # Get default role if specified
         default_role = None
@@ -3220,16 +3271,10 @@ class ImportDevicesView(View):
                 )
                 continue
 
-            # Get or create device type based on platform
-            device_type_created = False
+            # Resolve device type — checks part_number first (devicetype-library
+            # convention), falls back to model, creates new if neither match.
             if platform:
-                device_type, device_type_created = DeviceType.objects.get_or_create(
-                    manufacturer=cisco_manufacturer,
-                    model=platform,
-                    defaults={
-                        "slug": platform.lower().replace(" ", "-").replace("/", "-"),
-                    },
-                )
+                device_type, device_type_created = resolve_device_type(cisco_manufacturer, platform)
             else:
                 # Use generic type if platform unknown
                 device_type, device_type_created = DeviceType.objects.get_or_create(
@@ -3319,6 +3364,7 @@ class ImportDevicesView(View):
                         device_type=device_type,
                         role=role,
                         default_site=default_site,
+                        default_location=default_location,
                         device_platform=device_platform,
                         sync_interfaces=sync_interfaces,
                     )
@@ -3353,6 +3399,7 @@ class ImportDevicesView(View):
                     device_type=device_type,
                     role=role,
                     site=default_site,
+                    location=default_location,
                     serial=serial or "",
                     status="active",
                     platform=device_platform,
@@ -3372,13 +3419,17 @@ class ImportDevicesView(View):
                 # Add Catalyst Center tag
                 new_device.tags.add(cc_tag)
 
-                # Create a management interface (use 'other' type for management)
-                mgmt_interface = Interface(
-                    device=new_device,
-                    name="Management",
-                    type="1000base-t",
-                )
-                mgmt_interface.save()
+                # Reuse a Management interface if the device type template already
+                # instantiated one (NetBox auto-creates components from device type
+                # templates on Device.save()), otherwise create one.
+                mgmt_interface = new_device.interfaces.filter(name__iexact="Management").first()
+                if not mgmt_interface:
+                    mgmt_interface = Interface(
+                        device=new_device,
+                        name="Management",
+                        type="1000base-t",
+                    )
+                    mgmt_interface.save()
 
                 # Create IP address if available
                 if management_ip:
