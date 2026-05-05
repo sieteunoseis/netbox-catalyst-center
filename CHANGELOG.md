@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-05
+
+### Added
+
+- Sync **power supply** details from Catalyst Center to NetBox during interface sync. The plugin already calls CC's `/network-device/{id}/equipment` endpoint to fetch transceiver data; we now also extract entries whose `vendorEquipmentType` or name identifies them as power supplies and write each as a device-level `InventoryItem` (name from CC, plus `part_id`, `serial`, `manufacturer`, `description`, `discovered=True`). The sync is idempotent — re-running on an unchanged device updates nothing. For virtual-chassis devices, a PSU named `"Switch N - Power Supply X"` is assigned to the matching member device; otherwise the master receives it. Resolves [#3](https://github.com/sieteunoseis/netbox-catalyst-center/issues/3).
+
 ## [1.7.0] - 2026-05-05
 
 ### Added

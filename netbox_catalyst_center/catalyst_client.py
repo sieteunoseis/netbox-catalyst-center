@@ -5,12 +5,31 @@ Handles authentication and API calls to Catalyst Center (formerly DNA Center).
 """
 
 import logging
+import re
 
 import requests
 from django.conf import settings
 from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_power_supply(name, vendor_type):
+    """True if a CC equipment entry represents a power supply."""
+    haystack = f"{name} {vendor_type}".lower()
+    return "power supply" in haystack or "powersupply" in haystack
+
+
+_STACK_MEMBER_RE = re.compile(r"\bswitch\s+(\d+)\b", re.IGNORECASE)
+
+
+def _parse_stack_member(name):
+    """Extract the stack member number from a CC equipment name like
+    'Switch 2 - Power Supply 0', else None for non-stack entries."""
+    if not name:
+        return None
+    m = _STACK_MEMBER_RE.search(name)
+    return int(m.group(1)) if m else None
 
 
 class CatalystCenterClient:
@@ -851,16 +870,15 @@ class CatalystCenterClient:
 
     def get_device_equipment(self, device_id):
         """
-        Get equipment/transceiver details for a device.
-
-        This returns information about installed SFP modules, line cards,
-        and other equipment that can help determine interface media types.
+        Get equipment details for a device — transceivers, power supplies,
+        line cards, and similar inventory.
 
         Args:
             device_id: The Catalyst Center device UUID
 
         Returns:
-            dict with "equipment" array or "error"
+            dict with "equipment", "transceivers", "power_supplies" arrays/dicts,
+            or "error".
         """
         if not device_id:
             return {"error": "No device ID provided"}
@@ -883,45 +901,64 @@ class CatalystCenterClient:
 
         equipment_list = result.get("response", [])
 
-        # Parse equipment data, focusing on transceivers
         equipment = []
-        transceivers = {}  # Map interface name to transceiver info
+        transceivers = {}  # interface name -> transceiver info
+        power_supplies = []  # list of PSU dicts
 
         for eq in equipment_list:
             name = eq.get("name", "")
             description = eq.get("description", "")
             product_id = eq.get("productId", "")
             vendor_type = eq.get("vendorEquipmentType", "")
+            serial = eq.get("serialNumber", "")
+            manufacturer = eq.get("manufacturer", "")
 
             eq_data = {
                 "name": name,
                 "description": description,
                 "product_id": product_id,
                 "vendor_type": vendor_type,
-                "serial_number": eq.get("serialNumber", ""),
-                "manufacturer": eq.get("manufacturer", ""),
+                "serial_number": serial,
+                "manufacturer": manufacturer,
             }
             equipment.append(eq_data)
 
-            # If this is a transceiver (has interface name pattern), index it
-            # Transceivers have names like "TenGigabitEthernet1/1/8" not "Container"
+            # Transceivers — entries whose name looks like an interface
             if product_id and "Container" not in name:
-                # Check if name looks like an interface
                 if any(x in name for x in ["Ethernet", "Gigabit", "Channel"]):
                     transceivers[name] = {
                         "product_id": product_id,
                         "description": description,
                         "vendor_type": vendor_type,
-                        "manufacturer": eq.get("manufacturer", ""),
-                        "serial_number": eq.get("serialNumber", ""),
+                        "manufacturer": manufacturer,
+                        "serial_number": serial,
                     }
+
+            # Power supplies — match by vendorEquipmentType OR name pattern.
+            # CC commonly uses vendorEquipmentType values like "PowerSupply" or
+            # "Power Supply"; names look like "Power Supply Module 0" or, on a
+            # stack, "Switch 1 - Power Supply 0". Skip Container placeholders.
+            if _looks_like_power_supply(name, vendor_type) and "Container" not in name:
+                power_supplies.append(
+                    {
+                        "name": name,
+                        "description": description,
+                        "product_id": product_id,
+                        "vendor_type": vendor_type,
+                        "manufacturer": manufacturer,
+                        "serial_number": serial,
+                        "stack_member": _parse_stack_member(name),
+                    }
+                )
 
         equipment_info = {
             "device_id": device_id,
             "equipment": equipment,
             "transceivers": transceivers,
+            "power_supplies": power_supplies,
             "equipment_count": len(equipment),
             "transceiver_count": len(transceivers),
+            "power_supply_count": len(power_supplies),
             "cached": False,
         }
 

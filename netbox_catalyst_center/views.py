@@ -1356,6 +1356,13 @@ class SyncDeviceFromDNACView(View):
             if transceiver_count:
                 summary_parts.append(f"{transceiver_count} transceivers synced")
 
+        # Sync power supplies as device-level InventoryItems
+        power_supplies = equipment_result.get("power_supplies", []) if "error" not in equipment_result else []
+        if power_supplies:
+            psu_count = self._sync_power_supplies(device, power_supplies)
+            if psu_count:
+                summary_parts.append(f"{psu_count} power supplies synced")
+
         if summary_parts:
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
         else:
@@ -1648,6 +1655,21 @@ class SyncDeviceFromDNACView(View):
                 transceiver_count += self._sync_transceivers(member_device, member_transceivers)
             if transceiver_count:
                 summary_parts.append(f"{transceiver_count} transceivers synced")
+
+        # Sync power supplies — assign to the matching stack member when CC's
+        # equipment name encodes "Switch N" (e.g. "Switch 2 - Power Supply 0"),
+        # otherwise fall back to the master device.
+        power_supplies = equipment_result.get("power_supplies", []) if "error" not in equipment_result else []
+        if power_supplies:
+            buckets = {}
+            for psu in power_supplies:
+                target = member_devices.get(psu.get("stack_member")) or master_device
+                buckets.setdefault(target.pk, (target, []))[1].append(psu)
+            psu_count = 0
+            for target, psus in buckets.values():
+                psu_count += self._sync_power_supplies(target, psus)
+            if psu_count:
+                summary_parts.append(f"{psu_count} power supplies synced")
 
         if summary_parts:
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
@@ -2245,6 +2267,86 @@ class SyncDeviceFromDNACView(View):
                     serial=serial or "",
                     description=description or "",
                     discovered=True,  # Mark as auto-discovered
+                )
+                inv_item.save()
+                synced_count += 1
+
+        return synced_count
+
+    def _sync_power_supplies(self, device, power_supplies):
+        """
+        Sync power-supply entries as device-level InventoryItems.
+
+        Args:
+            device: The NetBox device
+            power_supplies: List of PSU dicts from
+                ``CatalystCenterClient.get_device_equipment()``. Each dict has:
+                name, description, product_id, vendor_type, manufacturer,
+                serial_number, stack_member.
+
+        Returns:
+            int: Number of PSUs created or updated.
+
+        Idempotent: matched on (device, name). Re-running on an unchanged
+        device is a no-op.
+        """
+        if not power_supplies:
+            return 0
+
+        synced_count = 0
+        manufacturer_cache = {}
+
+        for psu in power_supplies:
+            name = psu.get("name") or ""
+            product_id = psu.get("product_id") or ""
+            serial = psu.get("serial_number") or ""
+            mfg_name = psu.get("manufacturer") or ""
+            description = psu.get("description") or ""
+
+            # Need at least a name to anchor the InventoryItem.
+            if not name:
+                continue
+
+            # Manufacturer (normalize CC's "CISCO-AVAGO" style to "Cisco")
+            manufacturer = None
+            if mfg_name:
+                normalized_mfg = mfg_name.split("-")[0].title() if "-" in mfg_name else mfg_name
+                if normalized_mfg not in manufacturer_cache:
+                    mfg_slug = normalized_mfg.lower().replace(" ", "-")
+                    manufacturer, _ = Manufacturer.objects.get_or_create(
+                        slug=mfg_slug, defaults={"name": normalized_mfg}
+                    )
+                    manufacturer_cache[normalized_mfg] = manufacturer
+                else:
+                    manufacturer = manufacturer_cache[normalized_mfg]
+
+            existing = InventoryItem.objects.filter(device=device, name=name).first()
+            if existing:
+                updated = False
+                if product_id and existing.part_id != product_id:
+                    existing.part_id = product_id
+                    updated = True
+                if serial and existing.serial != serial:
+                    existing.serial = serial
+                    updated = True
+                if manufacturer and existing.manufacturer != manufacturer:
+                    existing.manufacturer = manufacturer
+                    updated = True
+                if description and existing.description != description:
+                    existing.description = description
+                    updated = True
+                if updated:
+                    existing.save()
+                    synced_count += 1
+            else:
+                inv_item = InventoryItem(
+                    device=device,
+                    name=name,
+                    manufacturer=manufacturer,
+                    part_id=product_id,
+                    serial=serial,
+                    description=description,
+                    discovered=True,
                 )
                 inv_item.save()
                 synced_count += 1
