@@ -37,6 +37,9 @@ from .forms import CatalystCenterSettingsForm
 
 logger = logging.getLogger(__name__)
 
+# Tab order on object pages; override with PLUGINS_CONFIG["netbox_catalyst_center"]["tab_weight"]
+TAB_WEIGHT = settings.PLUGINS_CONFIG.get("netbox_catalyst_center", {}).get("tab_weight", 9001)
+
 
 def is_valid_mac(value):
     """Check if a value looks like a MAC address."""
@@ -331,7 +334,7 @@ class DeviceCatalystCenterView(generic.ObjectView):
 
     tab = ViewTab(
         label="Cisco Catalyst Center",
-        weight=9001,
+        weight=TAB_WEIGHT,
         permission="dcim.view_device",
         hide_if_empty=False,
         visible=should_show_catalyst_tab,
@@ -466,7 +469,7 @@ if ENDPOINTS_PLUGIN_INSTALLED:
 
         tab = ViewTab(
             label="Cisco Catalyst Center",
-            weight=9001,
+            weight=TAB_WEIGHT,
             permission="netbox_endpoints.view_endpoint",
             hide_if_empty=False,
             visible=should_show_catalyst_tab_endpoint,

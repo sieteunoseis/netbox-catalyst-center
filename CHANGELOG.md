@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-17
+
+### Added
+- `tab_weight` setting (default `9001`) to control where this plugin's tab sits on object pages, so tab order can be set in config instead of code
+- `top_level_menu` setting (default `True`); set `False` to list this plugin's menu items under the shared "Plugins" menu instead of its own top-level sidebar menu
+
+### Changed
+- Plugin display name shortened to "Catalyst Center" (was "NetBox Catalyst Center") so it matches the sidebar menu label
+
 ## [1.9.0] - 2026-05-05
 
 ### Added
