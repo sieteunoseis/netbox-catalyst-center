@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-23
+
+### Added
+- Network/uplink modules (e.g. `C9300-NM-8X`) are synced as InventoryItems with part ID and serial, placed on the matching stack member; runs with "Sync Interfaces" or the renamed "Sync Power Supplies & Modules" option (#22)
+- Virtual Chassis import now sets `vc_priority` from the real StackWise switch priority (`/network-device/{id}/stack`) and makes the ACTIVE switch the chassis master; falls back to 255/128 if the call fails (#23)
+- "Sync Stack Priorities" sync option to update priorities and master on already-imported Virtual Chassis (#23)
+
+### Fixed
+- Trailing spaces in Catalyst Center `productId` values are stripped (PSU part IDs were stored padded)
+- PSU/module InventoryItems default to manufacturer Cisco when Catalyst Center leaves it blank
+
 ## [1.10.0] - 2026-11-17
 
 ### Added

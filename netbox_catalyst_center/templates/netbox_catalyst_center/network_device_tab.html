@@ -553,12 +553,23 @@
                         <div class="form-check sync-field mt-3">
                             <input class="form-check-input" type="checkbox" id="sync-power-supplies">
                             <label class="form-check-label" for="sync-power-supplies">
-                                <strong>Sync Power Supplies</strong>
+                                <strong>Sync Power Supplies &amp; Modules</strong>
                                 <br><small class="text-muted">
-                                    Create or update an InventoryItem per installed PSU
-                                    (model, serial, manufacturer). Empty slots are skipped.
-                                    Already runs for free with "Sync Interfaces"; pick this to
-                                    sync PSUs without touching interfaces.
+                                    Create or update an InventoryItem per installed PSU and
+                                    network/uplink module (e.g. C9300-NM-8X) with model, serial,
+                                    manufacturer. Empty slots are skipped. Already runs for free
+                                    with "Sync Interfaces"; pick this to sync without touching interfaces.
+                                </small>
+                            </label>
+                        </div>
+                        <div class="form-check sync-field mt-3">
+                            <input class="form-check-input" type="checkbox" id="sync-stack">
+                            <label class="form-check-label" for="sync-stack">
+                                <strong>Sync Stack Priorities</strong>
+                                <br><small class="text-muted">
+                                    Virtual Chassis only. Set each member's vc_priority to its
+                                    StackWise switch priority (1&ndash;15) and make the ACTIVE
+                                    switch the chassis master.
                                 </small>
                             </label>
                         </div>
@@ -637,7 +648,8 @@
                 sync_interfaces: document.getElementById('sync-interfaces') ? document.getElementById('sync-interfaces').checked : false,
                 overwrite_ips: document.getElementById('overwrite-ips') ? document.getElementById('overwrite-ips').checked : false,
                 sync_poe: document.getElementById('sync-poe') ? document.getElementById('sync-poe').checked : false,
-                sync_power_supplies: document.getElementById('sync-power-supplies') ? document.getElementById('sync-power-supplies').checked : false
+                sync_power_supplies: document.getElementById('sync-power-supplies') ? document.getElementById('sync-power-supplies').checked : false,
+                sync_stack: document.getElementById('sync-stack') ? document.getElementById('sync-stack').checked : false
             };
 
             // Check if at least one option is selected

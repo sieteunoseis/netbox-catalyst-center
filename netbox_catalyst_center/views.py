@@ -740,6 +740,7 @@ class SyncDeviceFromDNACView(View):
         overwrite_ips = body.get("overwrite_ips", False)
         sync_poe = body.get("sync_poe", False)
         sync_power_supplies = body.get("sync_power_supplies", False)
+        sync_stack = body.get("sync_stack", False)
 
         client = get_client()
         if not client:
@@ -963,25 +964,31 @@ class SyncDeviceFromDNACView(View):
                     if "error" in equipment_result:
                         changes.append(f"Power supplies: error - {equipment_result['error']}")
                     else:
-                        psus = equipment_result.get("power_supplies", [])
+                        members = None
                         if device.virtual_chassis:
-                            # Distribute PSUs across stack members based on "Switch N" prefix.
                             members = {d.vc_position: d for d in device.virtual_chassis.members.all()}
-                            buckets = {}
-                            for psu in psus:
-                                target = members.get(psu.get("stack_member")) or device
-                                buckets.setdefault(target.pk, (target, []))[1].append(psu)
-                            psu_count = sum(self._sync_power_supplies(t, ps) for t, ps in buckets.values())
-                        else:
-                            psu_count = self._sync_power_supplies(device, psus)
-                        if psu_count:
-                            changes.append(f"Power supplies: {psu_count} synced")
-                        else:
-                            changes.append("Power supplies: no changes")
+                        psu_count, module_count = self._sync_hardware_items(device, equipment_result, members)
+                        changes.append(
+                            f"Power supplies: {psu_count} synced" if psu_count else "Power supplies: no changes"
+                        )
+                        if module_count:
+                            changes.append(f"Modules: {module_count} synced")
                 except Exception as e:
                     changes.append(f"Power supplies: error - {str(e)}")
             else:
                 changes.append("Power supplies: skipped (no device ID)")
+
+        # Sync StackWise priorities + active switch onto the Virtual Chassis
+        if sync_stack and device.virtual_chassis:
+            device_id = dnac_data.get("device_id")
+            if device_id:
+                stack_result = client.get_device_stack(device_id)
+                if "error" in stack_result:
+                    changes.append(f"Stack: error - {stack_result['error']}")
+                else:
+                    changes.extend(apply_stack_priorities(device.virtual_chassis, stack_result.get("members", [])))
+            else:
+                changes.append("Stack: skipped (no device ID)")
 
         if not changes:
             return JsonResponse(
@@ -1391,12 +1398,12 @@ class SyncDeviceFromDNACView(View):
             if transceiver_count:
                 summary_parts.append(f"{transceiver_count} transceivers synced")
 
-        # Sync power supplies as device-level InventoryItems
-        power_supplies = equipment_result.get("power_supplies", []) if "error" not in equipment_result else []
-        if power_supplies:
-            psu_count = self._sync_power_supplies(device, power_supplies)
-            if psu_count:
-                summary_parts.append(f"{psu_count} power supplies synced")
+        # Sync power supplies and network/uplink modules as InventoryItems
+        psu_count, module_count = self._sync_hardware_items(device, equipment_result)
+        if psu_count:
+            summary_parts.append(f"{psu_count} power supplies synced")
+        if module_count:
+            summary_parts.append(f"{module_count} modules synced")
 
         if summary_parts:
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
@@ -1691,20 +1698,14 @@ class SyncDeviceFromDNACView(View):
             if transceiver_count:
                 summary_parts.append(f"{transceiver_count} transceivers synced")
 
-        # Sync power supplies — assign to the matching stack member when CC's
-        # equipment name encodes "Switch N" (e.g. "Switch 2 - Power Supply 0"),
-        # otherwise fall back to the master device.
-        power_supplies = equipment_result.get("power_supplies", []) if "error" not in equipment_result else []
-        if power_supplies:
-            buckets = {}
-            for psu in power_supplies:
-                target = member_devices.get(psu.get("stack_member")) or master_device
-                buckets.setdefault(target.pk, (target, []))[1].append(psu)
-            psu_count = 0
-            for target, psus in buckets.values():
-                psu_count += self._sync_power_supplies(target, psus)
-            if psu_count:
-                summary_parts.append(f"{psu_count} power supplies synced")
+        # Sync power supplies and modules — assign to the matching stack member
+        # when CC's equipment name encodes "Switch N" (e.g. "Switch 2 - Power
+        # Supply A", "Switch 2 FRU Uplink Module 1"), otherwise the master.
+        psu_count, module_count = self._sync_hardware_items(master_device, equipment_result, member_devices)
+        if psu_count:
+            summary_parts.append(f"{psu_count} power supplies synced")
+        if module_count:
+            summary_parts.append(f"{module_count} modules synced")
 
         if summary_parts:
             changes.append(f"Interfaces: {', '.join(summary_parts)}")
@@ -2308,6 +2309,27 @@ class SyncDeviceFromDNACView(View):
 
         return synced_count
 
+    def _sync_hardware_items(self, device, equipment_result, member_devices=None):
+        """
+        Sync power supplies and network/uplink modules as InventoryItems.
+
+        For a virtual chassis, items are placed on the stack member encoded in
+        CC's "Switch N ..." equipment name, falling back to ``device``.
+
+        Returns:
+            tuple: (psu_count, module_count) created or updated.
+        """
+        if not equipment_result or "error" in equipment_result:
+            return 0, 0
+        counts = []
+        for key in ("power_supplies", "modules"):
+            buckets = {}
+            for item in equipment_result.get(key, []):
+                target = (member_devices or {}).get(item.get("stack_member")) or device
+                buckets.setdefault(target.pk, (target, []))[1].append(item)
+            counts.append(sum(self._sync_power_supplies(t, items) for t, items in buckets.values()))
+        return counts[0], counts[1]
+
     def _sync_power_supplies(self, device, power_supplies):
         """
         Sync power-supply entries as device-level InventoryItems.
@@ -2335,7 +2357,7 @@ class SyncDeviceFromDNACView(View):
             name = psu.get("name") or ""
             product_id = psu.get("product_id") or ""
             serial = psu.get("serial_number") or ""
-            mfg_name = psu.get("manufacturer") or ""
+            mfg_name = psu.get("manufacturer") or "Cisco"  # CC often leaves this blank
             description = psu.get("description") or ""
 
             # Need at least a name to anchor the InventoryItem.
@@ -2983,6 +3005,56 @@ class SearchDevicesView(View):
         return JsonResponse(result)
 
 
+def stack_priority_map(stack_members):
+    """Return ({SERIAL: priority}, active_serial) from get_device_stack() members."""
+    priorities = {}
+    active_serial = None
+    for m in stack_members or []:
+        serial = (m.get("serial_number") or "").upper()
+        if not serial:
+            continue
+        if isinstance(m.get("priority"), int) and 1 <= m["priority"] <= 255:
+            priorities[serial] = m["priority"]
+        if m.get("role") == "ACTIVE":
+            active_serial = serial
+    return priorities, active_serial
+
+
+def apply_stack_priorities(vc, stack_members):
+    """
+    Update vc_priority on each Virtual Chassis member (matched by serial) and
+    set the VC master to the ACTIVE switch reported by Catalyst Center.
+
+    Returns:
+        list[str]: human-readable change descriptions.
+    """
+    priorities, active_serial = stack_priority_map(stack_members)
+    if not priorities and not active_serial:
+        return ["Stack: no stack member data from Catalyst Center"]
+
+    changes = []
+    active_device = None
+    for member in vc.members.all():
+        serial = (member.serial or "").upper()
+        if not serial:
+            continue
+        if serial == active_serial:
+            active_device = member
+        prio = priorities.get(serial)
+        if prio is not None and member.vc_priority != prio:
+            changes.append(f"Stack: {member.name} priority {member.vc_priority} → {prio}")
+            member.vc_priority = prio
+            member.save()
+
+    if active_device and vc.master_id != active_device.pk:
+        old = vc.master.name if vc.master else "None"
+        vc.master = active_device
+        vc.save()
+        changes.append(f"Stack: master {old} → {active_device.name}")
+
+    return changes or ["Stack: priorities and master already in sync"]
+
+
 def _import_as_virtual_chassis(
     dnac_device,
     hostname_base,
@@ -3048,6 +3120,21 @@ def _import_as_virtual_chassis(
     while len(serial_list) < stack_count:
         serial_list.append("")
 
+    # Fetch real StackWise priorities / active switch (outside the transaction —
+    # external API call). Falls back to 255 for member 1 / 128 for the rest.
+    stack_priorities, active_serial = {}, None
+    if device_id:
+        try:
+            stack_client = get_client()
+            if stack_client:
+                stack_result = stack_client.get_device_stack(device_id)
+                if "error" not in stack_result:
+                    stack_priorities, active_serial = stack_priority_map(stack_result.get("members", []))
+        except Exception:
+            pass
+    upper_serials = [s.upper() for s in serial_list]
+    master_num = upper_serials.index(active_serial) + 1 if active_serial in upper_serials else 1
+
     # Get Cisco manufacturer for creating device types per member
     cisco_manufacturer, _ = Manufacturer.objects.get_or_create(
         slug="cisco",
@@ -3098,7 +3185,7 @@ def _import_as_virtual_chassis(
                     platform=device_platform,
                     virtual_chassis=vc,
                     vc_position=member_num,
-                    vc_priority=(255 if member_num == 1 else 128),  # Master gets highest priority
+                    vc_priority=stack_priorities.get(member_serial.upper(), 255 if member_num == master_num else 128),
                     comments=(
                         f"Imported from Catalyst Center (Virtual Chassis member {member_num})\n"
                         f"SNMP Location: {dnac_device.get('snmp_location', 'N/A')}"
@@ -3126,8 +3213,8 @@ def _import_as_virtual_chassis(
                     }
                 )
 
-                # First member is the master
-                if member_num == 1:
+                # ACTIVE switch (per CC) is the master; member 1 if unknown
+                if member_num == master_num:
                     master_device = member_device
 
             if not master_device:

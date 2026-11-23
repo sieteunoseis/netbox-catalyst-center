@@ -20,6 +20,18 @@ def _looks_like_power_supply(name, vendor_type):
     return "power supply" in haystack or "powersupply" in haystack
 
 
+def _looks_like_module(name, vendor_type):
+    """True if a CC equipment entry is a field-replaceable network/uplink module
+    (e.g. 'Switch 1 FRU Uplink Module 1' / C9300-NM-8X). Excludes empty-slot
+    containers, power supplies, and stack/chassis entries."""
+    lname = (name or "").lower()
+    if "module" not in lname or "container" in lname:
+        return False
+    if (vendor_type or "").startswith("cevContainer"):
+        return False
+    return not _looks_like_power_supply(name, vendor_type)
+
+
 _STACK_MEMBER_RE = re.compile(r"\bswitch\s+(\d+)\b", re.IGNORECASE)
 
 
@@ -904,11 +916,13 @@ class CatalystCenterClient:
         equipment = []
         transceivers = {}  # interface name -> transceiver info
         power_supplies = []  # list of PSU dicts
+        modules = []  # list of network/uplink module dicts
 
         for eq in equipment_list:
             name = eq.get("name", "")
             description = eq.get("description", "")
-            product_id = eq.get("productId", "")
+            # CC pads some productIds with trailing spaces ("C9300-NM-2Y        ")
+            product_id = (eq.get("productId") or "").strip()
             vendor_type = eq.get("vendorEquipmentType", "")
             serial = eq.get("serialNumber", "")
             manufacturer = eq.get("manufacturer", "")
@@ -951,6 +965,20 @@ class CatalystCenterClient:
                     }
                 )
 
+            # Network / uplink modules (e.g. C9300-NM-8X) — same shape as PSUs
+            if _looks_like_module(name, vendor_type) and (product_id or serial):
+                modules.append(
+                    {
+                        "name": name,
+                        "description": description,
+                        "product_id": product_id,
+                        "vendor_type": vendor_type,
+                        "manufacturer": manufacturer,
+                        "serial_number": serial,
+                        "stack_member": _parse_stack_member(name),
+                    }
+                )
+
         equipment_info = {
             "device_id": device_id,
             "equipment": equipment,
@@ -959,6 +987,8 @@ class CatalystCenterClient:
             "equipment_count": len(equipment),
             "transceiver_count": len(transceivers),
             "power_supply_count": len(power_supplies),
+            "modules": modules,
+            "module_count": len(modules),
             "cached": False,
         }
 
@@ -966,6 +996,38 @@ class CatalystCenterClient:
         cache.set(cache_key, equipment_info, cache_timeout)
 
         return equipment_info
+
+    def get_device_stack(self, device_id):
+        """
+        Get StackWise member details (priority, role, member number) for a device.
+
+        Uses /dna/intent/api/v1/network-device/{id}/stack.
+
+        Returns:
+            dict with "members": list of {serial_number, member_number, priority,
+            role, platform_id}, or "error".
+        """
+        if not device_id:
+            return {"error": "No device ID provided"}
+
+        endpoint = f"/dna/intent/api/v1/network-device/{device_id}/stack"
+        result = self._make_request(endpoint)
+        if "error" in result:
+            return result
+
+        response = result.get("response") or {}
+        members = []
+        for info in response.get("stackSwitchInfo") or []:
+            members.append(
+                {
+                    "serial_number": (info.get("serialNumber") or "").strip(),
+                    "member_number": info.get("stackMemberNumber"),
+                    "priority": info.get("switchPriority"),
+                    "role": (info.get("role") or "").upper(),
+                    "platform_id": info.get("platformId") or "",
+                }
+            )
+        return {"members": members}
 
     def _detect_stack(self, device):
         """
